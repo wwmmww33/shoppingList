@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>قوائمي - قوائمنا</title>
+    <link rel="stylesheet" href="/style.css">
+    <%- include('partials/theme-init') %>
+</head>
+<body>
+    <%- include('partials/nav', { ownedLists: ownedLists, sharedLists: sharedLists, pinnedList: pinnedList }) %>
+
+    <div class="container">
+        <% if (pinnedList) { %>
+            <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <h2 style="margin:0;"><i data-lucide="pin" class="lucide"></i> <a href="/lists/<%= pinnedList.id %>"><%= pinnedList.title %></a></h2>
+                <form method="POST" action="/lists/unpin">
+                    <input type="hidden" name="from" value="home">
+                    <button type="submit" class="btn btn-outline btn-sm">إلغاء التثبيت</button>
+                </form>
+            </div>
+            <div id="items-list-root">
+            <%- include('partials/items-list', {
+                listId: pinnedList.id,
+                isOwner: pinnedIsOwner,
+                activeItems: pinnedItems.active,
+                archivedItems: pinnedItems.archived,
+                stores: stores,
+                availableLists: availableLists,
+                knownItemNames: knownItemNames,
+                weekdayNames: weekdayNames,
+                itemCategories: itemCategories,
+                storeCategories: storeCategories,
+                units: units,
+                isSharedList: pinnedIsShared,
+                redirectTo: '/',
+                cancelledSort: cancelledSort
+            }) %>
+            </div>
+        <% } else { %>
+            <div class="card" style="text-align:center; color: var(--text-muted);">
+                <p>مفيش قائمة مثبتة دلوقتي.</p>
+                <p>افتح <i data-lucide="menu" class="lucide"></i> من فوق واختار قائمة تثبّتها هنا، أو أنشئ قائمة جديدة.</p>
+            </div>
+        <% } %>
+    </div>
+</body>
+</html>

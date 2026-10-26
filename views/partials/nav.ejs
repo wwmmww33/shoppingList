@@ -1,0 +1,77 @@
+<nav class="topnav">
+    <a class="brand" href="/"><i data-lucide="clipboard-list" class="lucide"></i> قوائمنا</a>
+    <div class="links">
+        <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="تبديل الوضع الليلي"><i data-lucide="moon" class="lucide"></i></button>
+        <button type="button" class="theme-toggle-btn" onclick="toggleListsDrawer()" title="القائمة"><i data-lucide="menu" class="lucide"></i></button>
+    </div>
+</nav>
+
+<div class="drawer-overlay" id="drawer-overlay" onclick="toggleListsDrawer()"></div>
+<div class="lists-drawer" id="lists-drawer">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <h3 style="margin:0;">القائمة</h3>
+        <button type="button" class="icon-btn" title="إغلاق" onclick="toggleListsDrawer()" style="font-size:1.3rem;"><i data-lucide="x" class="lucide"></i></button>
+    </div>
+
+    <nav style="display:flex; flex-direction:column; gap:12px; margin-bottom:10px; font-size:0.95rem;">
+        <a href="/"><i data-lucide="clipboard-list" class="lucide"></i> قوائمي</a>
+        <a href="/stores"><i data-lucide="store" class="lucide"></i> المحلات</a>
+        <% if (user && user.is_admin) { %>
+            <a href="/admin/users"><i data-lucide="users" class="lucide"></i> إدارة المستخدمين</a>
+        <% } %>
+        <a href="/account"><i data-lucide="settings" class="lucide"></i> حسابي والإعدادات</a>
+        <a href="/logout"><i data-lucide="log-out" class="lucide"></i> خروج (<%= user.name %>)</a>
+    </nav>
+
+    <% if (typeof ownedLists !== 'undefined') { %>
+        <hr style="border:none; border-top:1px solid var(--border); margin:14px 0;">
+
+        <button type="button" class="collapsible-toggle" onclick="toggleCollapsible('create-list-box')">
+            <span>+ إنشاء قائمة جديدة</span>
+            <span class="chev">▾</span>
+        </button>
+        <div class="collapsible-body card" id="create-list-box">
+            <form method="POST" action="/lists" class="inline-form">
+                <input type="text" name="title" placeholder="اسم القائمة (مثال: سوبرماركت)" required class="flex-1">
+                <button type="submit" class="btn btn-success">+ إنشاء</button>
+            </form>
+        </div>
+
+        <h4 style="margin:16px 0 6px;">قوائمي</h4>
+        <% if (ownedLists.length === 0) { %>
+            <p style="color: var(--text-muted); font-size:0.9rem;">لا توجد قوائم بعد.</p>
+        <% } %>
+        <% ownedLists.forEach(function(l) { %>
+            <div class="list-row">
+                <a href="/lists/<%= l.id %>"><%= l.title %></a>
+                <% if (pinnedList && pinnedList.id === l.id) { %>
+                    <span class="badge"><i data-lucide="pin" class="lucide"></i> مثبتة</span>
+                <% } else { %>
+                    <form method="POST" action="/lists/<%= l.id %>/pin">
+                        <input type="hidden" name="from" value="home">
+                        <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="pin" class="lucide"></i> تثبيت</button>
+                    </form>
+                <% } %>
+            </div>
+        <% }) %>
+
+        <h4 style="margin:16px 0 6px;">قوائم شاركها معي آخرون</h4>
+        <% if (sharedLists.length === 0) { %>
+            <p style="color: var(--text-muted); font-size:0.9rem;">لا توجد قوائم مشاركة معك.</p>
+        <% } %>
+        <% sharedLists.forEach(function(l) { %>
+            <div class="list-row">
+                <a href="/lists/<%= l.id %>"><%= l.title %></a>
+                <span class="meta">بواسطة <%= l.owner_name %></span>
+                <% if (pinnedList && pinnedList.id === l.id) { %>
+                    <span class="badge"><i data-lucide="pin" class="lucide"></i> مثبتة</span>
+                <% } else { %>
+                    <form method="POST" action="/lists/<%= l.id %>/pin">
+                        <input type="hidden" name="from" value="home">
+                        <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="pin" class="lucide"></i> تثبيت</button>
+                    </form>
+                <% } %>
+            </div>
+        <% }) %>
+    <% } %>
+</div>

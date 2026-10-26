@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>سجل شراء <%= item.name %> - قوائمنا</title>
+    <link rel="stylesheet" href="/style.css">
+    <%- include('partials/theme-init') %>
+</head>
+<body>
+    <%- include('partials/nav') %>
+    <div class="container">
+        <div class="card">
+            <a href="/lists/<%= list.id %>">&larr; رجوع للقائمة</a>
+            <h2 style="margin:10px 0 0;">سجل شراء: <%= item.name %></h2>
+        </div>
+
+        <div class="card">
+            <% if (purchases.length === 0) { %>
+                <p style="color: var(--text-muted);">لا يوجد سجل شراء لهذا الغرض بعد.</p>
+            <% } else { %>
+                <%
+                let cheapestId = null;
+                const priced = purchases.filter(p => p.price !== null);
+                if (priced.length > 0) {
+                    cheapestId = priced.reduce((min, p) => (p.price < min.price ? p : min), priced[0]).id;
+                }
+                %>
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>التاريخ</th>
+                            <th>المحل</th>
+                            <th>البراند</th>
+                            <th>سعر الوحدة</th>
+                            <th>الكمية</th>
+                            <th>الإجمالي</th>
+                            <th>بواسطة</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% purchases.forEach(function(p) { %>
+                            <tr class="<%= p.id === cheapestId ? 'best' : '' %>">
+                                <td>
+                                    <%= String(p.bought_at).slice(0, 10).split('-').reverse().join('-') %>
+                                    <div style="font-size:0.75rem; color: var(--text-muted);"><%= String(p.bought_at).slice(11, 16) %></div>
+                                </td>
+                                <td><%= p.store_name || '-' %></td>
+                                <td>
+                                    <% if (p.brand_image) { %><img src="<%= p.brand_image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="openImageLightbox(this.src)"><% } %>
+                                    <%= p.brand || '-' %>
+                                    <% if (p.brand_detail) { %><div style="font-size:0.75rem; color: var(--text-muted);"><%= p.brand_detail %></div><% } %>
+                                </td>
+                                <td><%= p.price !== null ? Number(p.price).toFixed(3) : '-' %></td>
+                                <td><%= p.purchased_qty !== null ? p.purchased_qty : '1 (افتراضي)' %></td>
+                                <td><%= p.price !== null ? (Number(p.price) * (p.purchased_qty !== null ? p.purchased_qty : 1)).toFixed(3) : '-' %></td>
+                                <td><%= p.buyer_name || 'مستخدم سابق' %></td>
+                                <td>
+                                    <button type="button" class="icon-btn" title="تعديل"
+                                        onclick="openEditPurchaseModal(<%= p.id %>, <%= JSON.stringify(p.store_id || '') %>, <%= JSON.stringify(p.brand || '') %>, <%= JSON.stringify(p.brand_detail || '') %>, <%= JSON.stringify(p.price !== null ? p.price : '') %>, <%= JSON.stringify(p.purchased_qty !== null ? p.purchased_qty : '') %>)">
+                                        <i data-lucide="pencil" class="lucide"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        <% }) %>
+                    </tbody>
+                </table>
+                <% if (cheapestId) { %>
+                    <p style="margin-top:10px; font-size:0.85rem; color: var(--text-muted);">الصف الأخضر هو أرخص سعر مُسجَّل.</p>
+                <% } %>
+            <% } %>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="edit-purchase-overlay" onclick="if (event.target === this) toggleEditPurchaseModal()">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>تعديل بيانات الشراء</h3>
+                <button type="button" class="icon-btn" title="إغلاق" onclick="toggleEditPurchaseModal()"><i data-lucide="x" class="lucide"></i></button>
+            </div>
+            <form method="POST" id="edit-purchase-form" class="inline-form">
+                <select name="store_id" id="edit-purchase-store">
+                    <option value="">بدون تحديد محل</option>
+                    <% stores.forEach(function(s) { %>
+                        <option value="<%= s.id %>"><%= s.name %></option>
+                    <% }) %>
+                </select>
+                <input type="text" name="brand" id="edit-purchase-brand" placeholder="اسم البراند">
+                <input type="text" name="brand_detail" id="edit-purchase-detail" placeholder="تفاصيل البراند">
+                <input type="number" step="0.001" min="0" inputmode="decimal" name="price" id="edit-purchase-price" placeholder="سعر الوحدة">
+                <input type="number" step="1" min="1" inputmode="numeric" name="purchased_qty" id="edit-purchase-qty" placeholder="عدد الوحدات (افتراضيًا 1)">
+                <button type="submit" class="btn btn-success btn-sm">حفظ</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function toggleEditPurchaseModal() {
+            var el = document.getElementById('edit-purchase-overlay');
+            if (el) el.classList.toggle('open');
+        }
+        function openEditPurchaseModal(purchaseId, storeId, brand, brandDetail, price, qty) {
+            document.getElementById('edit-purchase-form').action = '/purchases/' + purchaseId + '/edit';
+            document.getElementById('edit-purchase-store').value = storeId || '';
+            document.getElementById('edit-purchase-brand').value = brand || '';
+            document.getElementById('edit-purchase-detail').value = brandDetail || '';
+            document.getElementById('edit-purchase-price').value = price !== '' ? price : '';
+            document.getElementById('edit-purchase-qty').value = qty !== '' ? qty : '';
+            document.getElementById('edit-purchase-overlay').classList.add('open');
+        }
+    </script>
+</body>
+</html>

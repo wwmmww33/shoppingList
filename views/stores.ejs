@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>المحلات - قوائمنا</title>
+    <link rel="stylesheet" href="/style.css">
+    <%- include('partials/theme-init') %>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+    <%- include('partials/nav') %>
+    <div class="container">
+        <button type="button" class="fab" title="إضافة محل" onclick="toggleAddStoreModal()">
+            <i data-lucide="plus" class="lucide"></i>
+        </button>
+        <div class="modal-overlay" id="add-store-overlay" onclick="if (event.target === this) toggleAddStoreModal()">
+            <div class="modal-dialog">
+                <div class="modal-header">
+                    <h3>إضافة محل</h3>
+                    <button type="button" class="icon-btn" title="إغلاق" onclick="toggleAddStoreModal()"><i data-lucide="x" class="lucide"></i></button>
+                </div>
+                <p style="font-size:0.85rem; color: var(--text-muted); margin-top:-8px;">اضغط على الخريطة لتحديد موقع المحل (كبّر الخريطة لتظهر أسماء المحلات الفعلية عليها)، أو استخدم موقعك الحالي.</p>
+                <div id="store-map"></div>
+                <p id="place-suggestion" style="display:none; font-size:0.85rem; margin:-4px 0 10px;"></p>
+                <form method="POST" action="/stores" class="inline-form" id="store-form">
+                    <input type="text" name="name" id="store-name-input" placeholder="اسم المحل" required class="flex-2">
+                    <select name="category" class="flex-1">
+                        <option value="">بدون تصنيف</option>
+                        <% storeCategories.forEach(function(c) { %>
+                            <option value="<%= c.key %>"><%= c.label %></option>
+                        <% }) %>
+                    </select>
+                    <input type="hidden" name="lat" id="store-lat">
+                    <input type="hidden" name="lng" id="store-lng">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="useMyLocation()" id="locate-btn"><i data-lucide="locate-fixed" class="lucide"></i> موقعي الحالي</button>
+                    <button type="submit" class="btn btn-success">+ إضافة</button>
+                </form>
+                <p id="locate-status" style="font-size:0.8rem; color: var(--text-muted); margin-top:6px;"></p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">المحلات المسجّلة</h3>
+            <% if (stores.length === 0) { %>
+                <p style="color: var(--text-muted);">لا توجد محلات مسجّلة بعد.</p>
+            <% } %>
+            <%
+            const storeCatMap = {};
+            storeCategories.forEach(function(c) { storeCatMap[c.key] = c; });
+            %>
+            <% stores.forEach(function(s) { %>
+                <div class="list-row">
+                    <span onclick="toggleStoreActions(<%= s.id %>)" style="cursor:pointer;">
+                        <%= s.name %>
+                        <% if (s.category && storeCatMap[s.category]) { %><span class="badge"><i data-lucide="<%= storeCatMap[s.category].icon %>" class="lucide"></i> <%= storeCatMap[s.category].label %></span><% } %>
+                        <% if (s.lat && s.lng) { %><span class="meta"><i data-lucide="map-pin" class="lucide"></i></span><% } %>
+                    </span>
+                    <div class="store-actions" id="store-actions-<%= s.id %>" style="display:none; gap:6px;">
+                        <button type="button" class="btn btn-outline btn-sm" onclick="toggleStoreEdit(<%= s.id %>)"><i data-lucide="pencil" class="lucide"></i> تعديل</button>
+                        <form method="POST" action="/stores/<%= s.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذا المحل؟');">
+                            <button type="submit" class="btn btn-danger btn-sm">حذف</button>
+                        </form>
+                    </div>
+                </div>
+                <form method="POST" action="/stores/<%= s.id %>/edit" class="edit-panel" id="store-edit-<%= s.id %>">
+                    <input type="text" name="name" value="<%= s.name %>" required class="flex-2">
+                    <select name="category" class="flex-1">
+                        <option value="">بدون تصنيف</option>
+                        <% storeCategories.forEach(function(c) { %>
+                            <option value="<%= c.key %>" <%= s.category === c.key ? 'selected' : '' %>><%= c.label %></option>
+                        <% }) %>
+                    </select>
+                    <button type="submit" class="btn btn-success btn-sm">حفظ</button>
+                </form>
+            <% }) %>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        function toggleStoreActions(id) {
+            var el = document.getElementById('store-actions-' + id);
+            if (el) el.style.display = (el.style.display === 'flex') ? 'none' : 'flex';
+        }
+        function toggleStoreEdit(id) {
+            var el = document.getElementById('store-edit-' + id);
+            if (el) el.classList.toggle('open');
+        }
+
+        // The map is initialized once at page load, inside what is now a
+        // hidden-by-default modal. Leaflet measures its container's size at
+        // init time, so while hidden it computes a zero/stale size — calling
+        // invalidateSize() right after the modal becomes visible makes it
+        // re-measure and render correctly instead of looking blank/broken.
+        function toggleAddStoreModal() {
+            var overlay = document.getElementById('add-store-overlay');
+            if (!overlay) return;
+            overlay.classList.toggle('open');
+            if (overlay.classList.contains('open')) {
+                setTimeout(function() {
+                    map.invalidateSize();
+                    map.setView(marker ? marker.getLatLng() : defaultCenter, marker ? 17 : 7);
+                }, 150);
+            }
+        }
+
+        var defaultCenter = [23.6, 58.5];
+        var map = L.map('store-map').setView(defaultCenter, 7);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(map);
+
+        var marker = null;
+        function placeMarker(lat, lng) {
+            if (marker) { marker.setLatLng([lat, lng]); }
+            else { marker = L.marker([lat, lng], { draggable: true }).addTo(map); marker.on('dragend', function() { var p = marker.getLatLng(); setLatLng(p.lat, p.lng); suggestPlaceName(p.lat, p.lng); }); }
+            setLatLng(lat, lng);
+        }
+        function setLatLng(lat, lng) {
+            document.getElementById('store-lat').value = lat;
+            document.getElementById('store-lng').value = lng;
+        }
+
+        // Best-effort: look up a human-readable name for the pinned point (free
+        // OpenStreetMap Nominatim service) and offer it as a one-click fill-in,
+        // without touching the normal free-typing of the name field.
+        var suggestAbortController = null;
+        function suggestPlaceName(lat, lng) {
+            var box = document.getElementById('place-suggestion');
+            box.style.display = 'none';
+            if (suggestAbortController) suggestAbortController.abort();
+            suggestAbortController = new AbortController();
+
+            fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=' + lat + '&lon=' + lng + '&zoom=18&addressdetails=0', {
+                signal: suggestAbortController.signal,
+                headers: { 'Accept-Language': 'ar' }
+            })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    var name = data && (data.name || (data.display_name ? data.display_name.split(',')[0] : ''));
+                    if (!name) return;
+                    box.innerHTML = 'اقتراح اسم: <strong>' + name + '</strong> ' +
+                        '<button type="button" class="btn btn-outline btn-sm" id="use-suggestion-btn">استخدم هذا الاسم</button>';
+                    box.style.display = 'block';
+                    document.getElementById('use-suggestion-btn').onclick = function() {
+                        document.getElementById('store-name-input').value = name;
+                        box.style.display = 'none';
+                    };
+                })
+                .catch(function() {});
+        }
+
+        map.on('click', function(e) {
+            placeMarker(e.latlng.lat, e.latlng.lng);
+            document.getElementById('locate-status').textContent = 'تم تحديد الموقع من الخريطة ✓';
+            suggestPlaceName(e.latlng.lat, e.latlng.lng);
+        });
+
+        function useMyLocation() {
+            var status = document.getElementById('locate-status');
+            if (!navigator.geolocation) {
+                status.textContent = 'المتصفح لا يدعم تحديد الموقع.';
+                return;
+            }
+            status.textContent = 'جاري تحديد موقعك...';
+            navigator.geolocation.getCurrentPosition(function(pos) {
+                placeMarker(pos.coords.latitude, pos.coords.longitude);
+                map.setView([pos.coords.latitude, pos.coords.longitude], 17);
+                status.textContent = 'تم تحديد الموقع ✓';
+                suggestPlaceName(pos.coords.latitude, pos.coords.longitude);
+            }, function() {
+                status.textContent = 'تعذّر تحديد الموقع، يمكنك اختيار المكان من الخريطة يدويًا.';
+            });
+        }
+    </script>
+</body>
+</html>

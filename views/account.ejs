@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>حسابي والإعدادات - قوائمنا</title>
+    <link rel="stylesheet" href="/style.css">
+    <%- include('partials/theme-init') %>
+</head>
+<body>
+    <%- include('partials/nav') %>
+    <div class="container">
+        <div class="card">
+            <h3 style="margin-top:0;">بياناتي</h3>
+            <p><strong>الاسم:</strong> <%= user.name %></p>
+            <p><strong>الإيميل:</strong> <%= user.email %></p>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">تغيير كلمة المرور</h3>
+            <% if (error) { %>
+                <div class="error-box"><%= error %></div>
+            <% } %>
+            <% if (success) { %>
+                <div class="success-box"><%= success %></div>
+            <% } %>
+            <form method="POST" action="/account/password">
+                <div style="margin-bottom: 12px;">
+                    <input type="password" name="current_password" placeholder="كلمة المرور الحالية" required>
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <input type="password" name="new_password" placeholder="كلمة المرور الجديدة (6 أحرف على الأقل)" required minlength="6">
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <input type="password" name="confirm_password" placeholder="تأكيد كلمة المرور الجديدة" required minlength="6">
+                </div>
+                <button type="submit" class="btn btn-success btn-block">حفظ كلمة المرور الجديدة</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">تصنيفات الأغراض</h3>
+            <p style="font-size:0.85rem; color: var(--text-muted); margin-top:-6px;">عدّل اسم أي تصنيف أو أيقونته أو لونه، أو احذفه (تعود أغراضه إلى "بدون تصنيف"). هذا يشمل التصنيفات الأساسية أيضًا.</p>
+            <% itemCategories.forEach(function(c) { %>
+                <form method="POST" action="/categories/<%= c.id %>/edit" class="inline-form" style="margin-bottom:8px;">
+                    <input type="hidden" name="redirect_to" value="/account">
+                    <i data-lucide="<%= c.icon %>" class="lucide cat-icon-preview" style="color:<%= c.color %>; flex:0 0 auto;"></i>
+                    <input type="text" name="label" value="<%= c.label %>" required class="flex-2">
+                    <select name="icon" class="flex-1" onchange="this.previousElementSibling.setAttribute('data-lucide', this.value); if (window.renderIcons) renderIcons();">
+                        <% customCategoryIcons.forEach(function(ic) { %>
+                            <option value="<%= ic %>" <%= c.icon === ic ? 'selected' : '' %>><%= ic %></option>
+                        <% }) %>
+                    </select>
+                    <input type="color" name="color" value="<%= c.color %>" title="لون التصنيف" style="flex:0 0 auto; width:44px; padding:2px; border:1px solid var(--border); border-radius:6px;">
+                    <button type="submit" class="btn btn-success btn-sm">حفظ</button>
+                    <button type="submit" formaction="/categories/<%= c.id %>/delete" class="btn btn-danger btn-sm" onclick="return confirm('حذف هذا التصنيف؟ ستصبح أغراضه بدون تصنيف.');">حذف</button>
+                </form>
+            <% }) %>
+
+            <hr style="border:none; border-top:1px dashed var(--border); margin:16px 0 12px;">
+            <h4 style="margin:0 0 8px;">تصنيف جديد</h4>
+            <form method="POST" action="/categories" class="inline-form">
+                <input type="hidden" name="redirect_to" value="/account">
+                <input type="text" name="label" placeholder="اسم التصنيف" required class="flex-2">
+                <i data-lucide="package" class="lucide cat-icon-preview" style="flex:0 0 auto;"></i>
+                <select name="icon" class="flex-1" onchange="this.previousElementSibling.setAttribute('data-lucide', this.value); if (window.renderIcons) renderIcons();">
+                    <% customCategoryIcons.forEach(function(ic) { %>
+                        <option value="<%= ic %>"><%= ic %></option>
+                    <% }) %>
+                </select>
+                <input type="color" name="color" value="#43a047" title="لون التصنيف" style="flex:0 0 auto; width:44px; padding:2px; border:1px solid var(--border); border-radius:6px;">
+                <button type="submit" class="btn btn-success btn-sm">+ إضافة</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">اقتراح تصنيفات بالذكاء الاصطناعي</h3>
+            <p style="font-size:0.85rem; color: var(--text-muted); margin-top:-6px;">يحلّل الأغراض غير المصنّفة في كل قوائمك (ملكًا أو مشاركة) ويقترح تصنيفات جديدة مناسبة لها.</p>
+            <button type="button" class="btn btn-outline btn-sm" onclick="suggestCategoriesGlobally()"><i data-lucide="sparkles" class="lucide"></i> تحليل واقتراح</button>
+            <div id="global-category-suggest-body" style="margin-top:10px;"></div>
+        </div>
+    </div>
+
+    <script>
+        function suggestCategoriesGlobally() {
+            var body = document.getElementById('global-category-suggest-body');
+            body.innerHTML = '<p style="color: var(--text-muted); font-size:0.9rem;">جاري التحليل بالذكاء الاصطناعي...</p>';
+            fetch('/categories/suggest', { method: 'POST' })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    var suggestions = (data && data.suggestions) || [];
+                    if (suggestions.length === 0) {
+                        body.innerHTML = '<p style="color: var(--text-muted); font-size:0.9rem;">لا توجد اقتراحات حاليًا (إما كل الأغراض مصنفة، أو تعذّر التحليل).</p>';
+                        return;
+                    }
+                    body.innerHTML = '';
+                    suggestions.forEach(function(s) {
+                        var card = document.createElement('div');
+                        card.className = 'card';
+                        card.style.marginBottom = '10px';
+                        card.innerHTML =
+                            '<div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">' +
+                            '<span><i data-lucide="' + s.icon + '" class="lucide"></i> ' + s.label + '</span>' +
+                            '<button type="button" class="btn btn-success btn-sm">+ إضافة</button>' +
+                            '</div>' +
+                            '<p style="font-size:0.82rem; color: var(--text-muted); margin:6px 0 0;">' + s.items.join('، ') + '</p>';
+                        card.querySelector('button').onclick = function() {
+                            applyGlobalCategorySuggestion(s, card);
+                        };
+                        body.appendChild(card);
+                    });
+                    if (window.renderIcons) renderIcons();
+                })
+                .catch(function() {
+                    body.innerHTML = '<p style="color: var(--text-muted); font-size:0.9rem;">تعذّر الاتصال بالذكاء الاصطناعي.</p>';
+                });
+        }
+        function applyGlobalCategorySuggestion(suggestion, cardEl) {
+            fetch('/categories/apply-suggestion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label: suggestion.label, icon: suggestion.icon, itemIds: suggestion.itemIds }),
+            })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    if (data && data.ok) {
+                        cardEl.remove();
+                        window.location.reload();
+                    }
+                })
+                .catch(function() {});
+        }
+    </script>
+</body>
+</html>

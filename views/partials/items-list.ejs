@@ -1,0 +1,1427 @@
+<%
+// Expects: listId, isOwner, activeItems, archivedItems, stores,
+// availableLists, weekdayNames, itemCategories, customCategoryIcons, redirectTo (optional, defaults to /lists/:id)
+const baseUrl = typeof redirectTo !== 'undefined' ? redirectTo : ('/lists/' + listId);
+const activeSort = typeof cancelledSort !== 'undefined' ? cancelledSort : 'date';
+const activeHiddenFilter = typeof hiddenFilter !== 'undefined' ? hiddenFilter : 'all';
+const activeStoreFilter = typeof storeFilter !== 'undefined' && storeFilter ? storeFilter : null;
+// Builds a URL carrying the archive sort (?sort=), the active-list
+// hidden-items filter (?hidden=), and the planned-store filter (?store=) as
+// independent query params, so changing one never silently drops another.
+// Pass { sort: null } / { hidden: null } / { store: null } in overrides to
+// explicitly clear a param back to its default.
+function buildUrl(overrides) {
+    const params = {
+        sort: activeSort === 'category' ? 'category' : null,
+        hidden: activeHiddenFilter !== 'all' ? activeHiddenFilter : null,
+        store: activeStoreFilter || null,
+    };
+    Object.assign(params, overrides || {});
+    const parts = Object.keys(params).filter((k) => params[k]).map((k) => k + '=' + params[k]);
+    return baseUrl + (parts.length ? '?' + parts.join('&') : '');
+}
+// Carried in every form's hidden redirect_to field so a (JS-disabled) real submit
+// still lands back on the same filter state, not just the bare list URL.
+const redirectTarget = buildUrl({});
+const catMap = {};
+itemCategories.forEach(function(c) { catMap[c.key] = c; });
+const unitList = typeof units !== 'undefined' ? units : [];
+const unitMap = {};
+unitList.forEach(function(u) { unitMap[u.key] = u; });
+// Category group header (shown once per group when sorted by category): the
+// icon is colored per-category so categories stay visually distinguishable,
+// but the label text itself uses one consistent color across all categories
+// (set via the .category-header CSS rule, not per-instance) rather than a
+// different text color per category. Centered per the requested layout. In
+// the "bought"/"cancelled" sections, passing collapseId makes the header
+// itself a toggle: the group's items start folded, and clicking the header
+// opens/closes just that group (same collapse mechanism and open-state
+// preservation already used for the outer section).
+function catHeaderHtml(c, collapseId, showAddButton) {
+    const color = c ? c.color : '#9e9e9e';
+    const icon = '<i data-lucide="' + (c ? c.icon : 'package') + '" class="lucide cat-icon" style="color:' + color + ';"></i>';
+    const label = (c ? c.label : 'غير مصنف');
+    if (collapseId) {
+        return '<div class="category-header category-header-toggle" onclick="toggleCollapsible(\'' + collapseId + '\')">' +
+            icon + ' ' + label + ' <span class="chev">▾</span></div>';
+    }
+    const addBtn = showAddButton
+        ? ' <button type="button" class="icon-btn" title="إضافة غرض في هذا التصنيف" onclick="openAddItemModalForCategory(\'' + listId + '\', \'' + (c ? c.key : '') + '\');"><i data-lucide="plus-circle" class="lucide"></i></button>'
+        : '';
+    return '<div class="category-header">' + icon + ' ' + label + addBtn + '</div>';
+}
+// "2 كجم" when both are set, "2" or "كجم" alone when only one is, nothing otherwise.
+function qtyLabel(item) {
+    const unitLabel = item.unit && unitMap[item.unit] ? unitMap[item.unit].label : '';
+    const parts = [item.quantity, unitLabel].filter(Boolean);
+    if (parts.length === 0) return '';
+    return '<span class="item-qty">(' + parts.join(' ') + ')</span>';
+}
+// "price" is always the price of a single unit; quantity defaults to 1 when
+// left blank (never written into the stored row — a real "bought 1" and "qty
+// not specified" stay distinguishable), so the total is always price × qty,
+// computed here rather than stored as its own field to avoid it ever
+// drifting out of sync with the two numbers it comes from. Shows just the
+// unit price when there's nothing to multiply by (no qty, or qty is 1).
+function priceQtyLabel(price, qty) {
+    if (price === null || price === undefined) return '';
+    const unitPrice = Number(price);
+    const effectiveQty = qty !== null && qty !== undefined ? Number(qty) : 1;
+    if (effectiveQty === 1) return unitPrice.toFixed(3);
+    return unitPrice.toFixed(3) + ' × ' + effectiveQty + ' = ' + (unitPrice * effectiveQty).toFixed(3);
+}
+%>
+<div class="card" id="store-locator-trigger" style="display:flex; align-items:center; justify-content:space-between; gap:8px; cursor:pointer;" onclick="toggleStoreLocatorModal()">
+    <span style="font-size:0.9rem;"><i data-lucide="map-pin" class="lucide"></i> <span id="store-locator-trigger-text">تحديد موقع التسوق</span></span>
+    <i data-lucide="chevron-left" class="lucide"></i>
+</div>
+
+<div class="modal-overlay" id="store-locator-modal" onclick="if (event.target === this) toggleStoreLocatorModal()">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3>موقع التسوق</h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="toggleStoreLocatorModal()"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+    <div id="store-locator-current" style="display:none; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <span style="font-size:0.9rem;"><i data-lucide="store" class="lucide"></i> تشتري الآن من: <strong id="store-locator-current-name"></strong></span>
+        <div style="display:flex; gap:6px;">
+            <button type="button" class="btn btn-outline btn-sm" onclick="refreshStoreLocation()"><i data-lucide="locate-fixed" class="lucide"></i> تحديث الموقع</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="clearCurrentStore()"><i data-lucide="x" class="lucide"></i> إلغاء</button>
+        </div>
+    </div>
+    <div id="store-locator-idle" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <span style="font-size:0.85rem; color: var(--text-muted);">حدد المحل الذي تتسوق منه الآن تلقائيًا من موقعك.</span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="refreshStoreLocation()"><i data-lucide="locate-fixed" class="lucide"></i> تحديد الموقع</button>
+    </div>
+    <!-- One unified panel for both "found nearby store(s)" and "nothing
+         nearby": a location can have more than one store (e.g. a mall), so
+         the list of nearby matches and the "add another store here" option
+         are always shown together, not as separate either/or states. -->
+    <div id="store-locator-suggestion" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed var(--border);">
+        <p id="store-locator-suggest-intro" style="font-size:0.9rem; margin:0 0 8px;"></p>
+        <div id="store-locator-suggest-list" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;"></div>
+        <button type="button" class="collapsible-toggle" onclick="toggleCollapsible('store-locator-add-form')">
+            <span>+ إضافة محل آخر هنا</span>
+            <span class="chev">▾</span>
+        </button>
+        <div class="collapsible-body" id="store-locator-add-form">
+            <form method="POST" action="/stores" class="inline-form">
+                <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                <input type="hidden" name="lat" id="store-locator-lat">
+                <input type="hidden" name="lng" id="store-locator-lng">
+                <input type="text" name="name" placeholder="اسم المحل" required class="flex-2">
+                <select name="category" class="flex-1">
+                    <option value="">بدون تصنيف</option>
+                    <% (typeof storeCategories !== 'undefined' ? storeCategories : []).forEach(function(c) { %>
+                        <option value="<%= c.key %>"><%= c.label %></option>
+                    <% }) %>
+                </select>
+                <button type="submit" class="btn btn-success btn-sm">+ إضافة</button>
+            </form>
+        </div>
+        <button type="button" class="btn btn-outline btn-sm" style="margin-top:6px;" onclick="dismissStoreLocator()">تجاهل</button>
+    </div>
+    </div>
+</div>
+
+<!-- Running total of prices entered during the current shopping session
+     (resets when the person confirms they've started a new trip after a
+     long gap, see checkShoppingGap/updateShoppingSession). -->
+<div class="card" id="shopping-session-card" style="display:none; align-items:center; justify-content:space-between; gap:8px;">
+    <span style="font-size:0.9rem;"><i data-lucide="receipt" class="lucide"></i> إجمالي جلسة التسوق: <strong id="shopping-session-total"></strong></span>
+    <button type="button" class="btn btn-outline btn-sm" onclick="resetShoppingSession()"><i data-lucide="x" class="lucide"></i> إنهاء الجلسة</button>
+</div>
+
+<button type="button" class="fab-handle" id="fab-handle-<%= listId %>" title="إظهار/إخفاء أزرار الإضافة" onclick="toggleFabGroup('<%= listId %>')">
+    <i data-lucide="chevron-left" class="lucide"></i>
+</button>
+<div class="fab-group" id="fab-group-<%= listId %>">
+    <button type="button" class="fab fab-secondary" title="المشتراة والملغاة" onclick="toggleArchiveDrawer()">
+        <i data-lucide="archive" class="lucide"></i>
+        <% if (archivedItems.length > 0) { %>
+            <span class="fab-badge"><%= archivedItems.length %></span>
+        <% } %>
+    </button>
+    <button type="button" class="fab" title="إضافة غرض" onclick="toggleAddItemModal('<%= listId %>')">
+        <i data-lucide="plus" class="lucide"></i>
+    </button>
+</div>
+<div class="modal-overlay" id="add-item-overlay-<%= listId %>" onclick="if (event.target === this) toggleAddItemModal('<%= listId %>')">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3>إضافة غرض</h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="toggleAddItemModal('<%= listId %>')"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+    <form data-ajax-item-action method="POST" action="/lists/<%= listId %>/items" class="inline-form">
+        <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+        <div class="form-row">
+            <div class="autocomplete-wrap flex-2">
+                <input type="text" name="name" id="item-name-<%= listId %>" placeholder="اسم الغرض" required autocomplete="off" data-known-items="<%= JSON.stringify(typeof knownItemNames !== 'undefined' ? knownItemNames : []) %>">
+                <div class="autocomplete-list" id="item-suggestions-<%= listId %>"></div>
+            </div>
+            <input type="text" name="quantity" placeholder="الكمية (اختياري)" class="flex-1">
+        </div>
+        <select name="unit" class="flex-1">
+            <option value="">بدون وحدة</option>
+            <% unitList.forEach(function(u) { %>
+                <option value="<%= u.key %>"><%= u.label %></option>
+            <% }) %>
+        </select>
+        <select name="planned_store_id" class="flex-1" title="المحل المخطط للشراء منه">
+            <option value="">بدون محل محدد</option>
+            <% stores.forEach(function(s) { %>
+                <option value="<%= s.id %>"><%= s.name %></option>
+            <% }) %>
+        </select>
+        <select name="category" id="item-category-<%= listId %>" class="flex-1" onchange="handleCategorySelectChange(this, '<%= listId %>')">
+            <option value="">بدون تصنيف</option>
+            <% itemCategories.forEach(function(c) { %>
+                <option value="<%= c.key %>"><%= c.label %></option>
+            <% }) %>
+            <option value="__new_category__">+ تصنيف جديد</option>
+        </select>
+        <!-- Always rendered (never display:none) with a reserved min-height, so
+             filling in the AI status text on blur never reflows/shifts the
+             submit button right as someone taps it — a real layout-shift bug
+             on mobile where blur-then-tap happens in quick succession. -->
+        <span id="item-category-ai-status-<%= listId %>" style="display:block; flex-basis:100%; min-height:1.1em; font-size:0.78rem; color: var(--text-muted);"></span>
+        <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; white-space:nowrap;">
+            <input type="checkbox" name="is_weekly" id="is_weekly_toggle_<%= listId %>" onchange="document.getElementById('weekly_weekday_select_<%= listId %>').style.display = this.checked ? 'inline-block' : 'none';"> أسبوعي
+        </label>
+        <select name="weekly_weekday" id="weekly_weekday_select_<%= listId %>" style="display:none; flex:1;">
+            <% weekdayNames.forEach(function(name, idx) { %>
+                <option value="<%= idx %>"><%= name %></option>
+            <% }) %>
+        </select>
+        <button type="submit" class="btn btn-success">+ إضافة</button>
+    </form>
+    </div>
+</div>
+
+<div class="modal-overlay" id="category-modal-<%= listId %>" onclick="if (event.target === this) toggleCategoryModal('<%= listId %>')">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3>تصنيف جديد</h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="toggleCategoryModal('<%= listId %>')"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+        <form data-ajax-item-action method="POST" action="/categories" class="inline-form">
+            <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+            <input type="text" name="label" placeholder="اسم التصنيف" required class="flex-2">
+            <i data-lucide="package" class="lucide" id="category-icon-preview-<%= listId %>" style="flex:0 0 auto;"></i>
+            <select name="icon" id="category-icon-select-<%= listId %>" class="flex-1" onchange="updateCategoryIconPreview('<%= listId %>')">
+                <% customCategoryIcons.forEach(function(ic) { %>
+                    <option value="<%= ic %>"><%= ic %></option>
+                <% }) %>
+            </select>
+            <input type="color" name="color" value="#43a047" title="لون التصنيف" style="flex:0 0 auto; width:44px; padding:2px; border:1px solid var(--border); border-radius:6px;">
+            <button type="submit" class="btn btn-success btn-sm">+ إضافة</button>
+        </form>
+        <%
+        var customCategories = itemCategories.filter(function(c) { return c.created_by; });
+        %>
+        <% if (customCategories.length > 0) { %>
+        <div style="margin-top:14px; padding-top:14px; border-top:1px dashed var(--border);">
+            <p style="font-size:0.85rem; color: var(--text-muted); margin:0 0 8px;">التصنيفات المخصصة:</p>
+            <% customCategories.forEach(function(c) { %>
+                <div class="list-row">
+                    <span><i data-lucide="<%= c.icon %>" class="lucide" style="color:<%= c.color %>;"></i> <%= c.label %></span>
+                    <form data-ajax-item-action method="POST" action="/categories/<%= c.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذا التصنيف؟ ستصبح أغراضه بدون تصنيف.');">
+                        <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                        <button type="submit" class="btn btn-danger btn-sm">حذف</button>
+                    </form>
+                </div>
+            <% }) %>
+        </div>
+        <% } %>
+    </div>
+</div>
+
+<div class="modal-overlay" id="category-suggest-modal-<%= listId %>" onclick="if (event.target === this) toggleCategorySuggestModal('<%= listId %>')">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3>اقتراحات تصنيفات بالذكاء الاصطناعي</h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="toggleCategorySuggestModal('<%= listId %>')"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+        <div id="category-suggest-body-<%= listId %>"></div>
+    </div>
+</div>
+
+<div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+    <span>النشطة (<%= activeItems.length %>)</span>
+    <button type="button" class="btn btn-outline btn-sm" onclick="suggestCategoriesForList('<%= listId %>')"><i data-lucide="sparkles" class="lucide"></i> اقتراح تصنيفات</button>
+</div>
+<% if (isOwner) { %>
+<div style="display:flex; justify-content:flex-end; gap:10px; margin:-4px 0 8px; font-size:0.82rem;">
+    <a href="<%= buildUrl({ hidden: null }) %>" class="ajax-sort-link" style="<%= activeHiddenFilter === 'all' ? 'font-weight:bold; color:var(--primary);' : 'color:var(--text-muted);' %>">الكل</a>
+    <a href="<%= buildUrl({ hidden: 'hide' }) %>" class="ajax-sort-link" style="<%= activeHiddenFilter === 'hide' ? 'font-weight:bold; color:var(--primary);' : 'color:var(--text-muted);' %>">غير المخفية</a>
+    <a href="<%= buildUrl({ hidden: 'only' }) %>" class="ajax-sort-link" style="<%= activeHiddenFilter === 'only' ? 'font-weight:bold; color:var(--primary);' : 'color:var(--text-muted);' %>">المخفية فقط</a>
+</div>
+<% } %>
+<% if (stores.length > 0) { %>
+<div style="display:flex; justify-content:flex-end; margin:-4px 0 8px;">
+    <select onchange="navigateAjax(this.value)" style="font-size:0.82rem; padding:2px 6px;">
+        <option value="<%= buildUrl({ store: null }) %>" <%= !activeStoreFilter ? 'selected' : '' %>>كل المحلات</option>
+        <% stores.forEach(function(s) { %>
+            <option value="<%= buildUrl({ store: s.id }) %>" <%= activeStoreFilter === s.id ? 'selected' : '' %>>تصفية حسب: <%= s.name %></option>
+        <% }) %>
+    </select>
+</div>
+<% } %>
+<% if (activeItems.length === 0) { %>
+    <p style="color: var(--text-muted);">لا توجد أغراض نشطة.</p>
+<% } %>
+<%
+let lastCategory = '__none__';
+activeItems.forEach(function(item) {
+    const cat = item.category || '';
+    if (cat !== lastCategory) {
+        lastCategory = cat;
+%>
+    <%- catHeaderHtml(catMap[cat], undefined, true) %>
+<%
+    }
+%>
+    <div class="item-row <%= item.hidden_from_shared ? 'hidden-item' : '' %>" data-item-id="<%= item.id %>">
+        <div class="item-line" onclick="toggleItemControls(<%= item.id %>)">
+            <% if (item.last_brand_image) { %><img src="<%= item.last_brand_image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="event.stopPropagation(); openImageLightbox(this.src);"><% } %>
+            <span class="item-name"><%= item.name %></span>
+            <%- qtyLabel(item) %>
+            <% if (item.is_weekly) { %><i data-lucide="repeat" class="lucide icon-badge" title="أسبوعي - <%= weekdayNames[item.weekly_weekday] %>"></i><% } %>
+            <% if (item.hidden_from_shared) { %><i data-lucide="eye-off" class="lucide icon-badge" title="مخفي عن المشاركين"></i><% } %>
+            <% if (item.planned_store_name) { %><i data-lucide="map-pin" class="lucide icon-badge" title="المحل المخطط: <%= item.planned_store_name %>"></i><% } %>
+            <button type="button" class="icon-btn" title="تم الشراء" style="margin-inline-start:auto;" onclick="event.stopPropagation(); toggleBuyPanel(<%= item.id %>)"><i data-lucide="check-circle" class="lucide"></i></button>
+        </div>
+        <div class="item-sub">
+            آخر شراء: <%= item.last_bought_at ? String(item.last_bought_at).slice(0,10).split('-').reverse().join('-') + ' ' + String(item.last_bought_at).slice(11,16) : 'لم يُشترَ بعد' %>
+            <% if (item.last_brand || item.last_brand_detail) { %>· البراند: <%= item.last_brand || item.last_brand_detail %><% if (item.last_brand && item.last_brand_detail) { %> (<%= item.last_brand_detail %>)<% } %><% } %>
+            <% if (item.last_store_name) { %>· المحل: <%= item.last_store_name %><% } %>
+            <% if (item.planned_store_name) { %>· المحل المخطط: <%= item.planned_store_name %><% } %>
+            <% if (item.last_price !== null && item.last_price !== undefined) { %>· السعر: <%= priceQtyLabel(item.last_price, item.last_purchased_qty) %><% } %>
+        </div>
+        <div class="item-icons">
+            <div class="item-icons-extra" id="item-icons-extra-<%= item.id %>" style="display:none;">
+                <button type="button" class="icon-btn" title="تعديل" onclick="event.stopPropagation(); toggleEditPanel(<%= item.id %>)"><i data-lucide="pencil" class="lucide"></i></button>
+                <% if (availableLists.length > 0) { %>
+                    <button type="button" class="icon-btn" title="نقل أو نسخ لقائمة أخرى" onclick="event.stopPropagation(); toggleMovePanel(<%= item.id %>)"><i data-lucide="move" class="lucide"></i></button>
+                <% } %>
+                <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/cancel" style="display:inline;" onclick="event.stopPropagation();">
+                    <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                    <button type="submit" class="icon-btn" title="إلغاء مؤقت"><i data-lucide="circle-slash" class="lucide"></i></button>
+                </form>
+                <% if (isOwner) { %>
+                    <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/toggle-hidden" style="display:inline;" onclick="event.stopPropagation();">
+                        <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                        <button type="submit" class="icon-btn" title="<%= item.hidden_from_shared ? 'إظهار للمشاركين' : 'إخفاء عن المشاركين' %>"><i data-lucide="<%= item.hidden_from_shared ? 'eye' : 'eye-off' %>" class="lucide"></i></button>
+                    </form>
+                <% } %>
+                <a href="/items/<%= item.id %>/history" class="icon-btn" title="سجل الشراء" onclick="event.stopPropagation();"><i data-lucide="bar-chart-2" class="lucide"></i></a>
+                <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/delete" style="display:inline;" onclick="event.stopPropagation();" onsubmit="return confirm('حذف هذا الغرض نهائيًا؟');">
+                    <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                    <button type="submit" class="icon-btn" title="حذف"><i data-lucide="trash-2" class="lucide"></i></button>
+                </form>
+            </div>
+        </div>
+
+        <div class="buy-panel" id="buy-panel-<%= item.id %>" onclick="event.stopPropagation();">
+            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" style="display:inline;">
+                <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                <input type="hidden" name="store_id" class="quick-buy-store">
+                <button type="submit" class="btn btn-success btn-sm"><i data-lucide="check" class="lucide"></i> إكمال الشراء</button>
+            </form>
+            <%
+            // Past brand profiles are offered right here as one-tap re-buys
+            // (same brand/detail/price/photo as last time), not hidden behind
+            // "إضافة علامة تجارية" — that button is only for a brand that
+            // isn't already in this list. The store always follows the
+            // currently-confirmed shopping location (quick-buy-store), not
+            // wherever this profile was last bought from, since the person
+            // might be buying the same brand from a different store now.
+            item.pastBrands.forEach(function(b) {
+                var label = b.brand || b.detail || 'بدون اسم';
+                if (b.brand && b.detail) label += ' - ' + b.detail;
+                if (b.price !== null) label += ' (' + priceQtyLabel(b.price, b.qty) + ')';
+            %>
+            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" style="display:inline;">
+                <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                <input type="hidden" name="store_id" class="quick-buy-store" value="<%= b.storeId || '' %>">
+                <input type="hidden" name="brand_select" value="__custom__">
+                <input type="hidden" name="brand_custom" value="<%= b.brand || '' %>">
+                <input type="hidden" name="brand_detail" value="<%= b.detail || '' %>">
+                <input type="hidden" name="price" value="<%= b.price !== null ? b.price : '' %>">
+                <input type="hidden" name="purchased_qty" value="<%= b.qty !== null ? b.qty : '' %>">
+                <input type="hidden" name="existing_brand_image" value="<%= b.image || '' %>">
+                <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="repeat" class="lucide"></i> <%= label %></button>
+            </form>
+            <% }) %>
+            <button type="button" class="btn btn-outline btn-sm" onclick="toggleBrandModal(<%= item.id %>, true)"><i data-lucide="tag" class="lucide"></i> إضافة علامة تجارية</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="toggleBuyPanel(<%= item.id %>)">إلغاء</button>
+        </div>
+
+        <div class="modal-overlay" id="brand-modal-<%= item.id %>" onclick="if (event.target === this) toggleBrandModal(<%= item.id %>)">
+            <div class="modal-dialog">
+                <div class="modal-header">
+                    <h3>بيانات العلامة التجارية</h3>
+                    <button type="button" class="icon-btn" title="إغلاق" onclick="toggleBrandModal(<%= item.id %>)"><i data-lucide="x" class="lucide"></i></button>
+                </div>
+                <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" class="inline-form">
+                    <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                    <select name="brand_select" onchange="handleBrandSelectChange(this, <%= item.id %>);">
+                        <option value="">غير محدد</option>
+                        <%
+                        // A past purchase might only ever have had a detail/size
+                        // noted (e.g. "ابو امين 3 كيلو") with no separate brand
+                        // name typed — still a real, reusable profile, so it's
+                        // listed too, not just ones with a formal brand name.
+                        item.pastBrands.forEach(function(b, bIdx) {
+                            var label = b.brand || b.detail || 'بدون اسم';
+                            if (b.brand && b.detail) label += ' - ' + b.detail;
+                            if (b.storeName) label += ' - ' + b.storeName;
+                            if (b.price !== null) label += ' (' + priceQtyLabel(b.price, b.qty) + ')';
+                        %>
+                            <option value="__past__<%= bIdx %>" data-brand="<%= b.brand || '' %>" data-detail="<%= b.detail || '' %>" data-price="<%= b.price !== null ? b.price : '' %>" data-qty="<%= b.qty !== null ? b.qty : '' %>" data-image="<%= b.image || '' %>" data-store="<%= b.storeId || '' %>"><%= label %></option>
+                        <% }) %>
+                        <option value="__custom__">+ براند جديد</option>
+                    </select>
+                    <input type="text" name="brand_custom" id="brand-custom-<%= item.id %>" placeholder="اسم البراند" style="display:none;">
+                    <input type="text" name="brand_detail" id="brand-detail-<%= item.id %>" placeholder="تفاصيل البراند (الحجم/النوع، مثال: كرتون)">
+                    <input type="number" step="1" min="1" inputmode="numeric" name="purchased_qty" id="purchased-qty-<%= item.id %>" placeholder="عدد الوحدات (افتراضيًا 1)">
+                    <label class="btn btn-outline btn-sm" style="cursor:pointer; flex:0 0 auto; display:inline-flex; align-items:center; gap:4px;">
+                        <i data-lucide="camera" class="lucide"></i> التقاط صورة
+                        <input type="file" name="brand_image" class="brand-image-input" accept="image/*" capture="environment" style="display:none;" onchange="previewBrandImage(this, <%= item.id %>)">
+                    </label>
+                    <label class="btn btn-outline btn-sm" style="cursor:pointer; flex:0 0 auto; display:inline-flex; align-items:center; gap:4px;">
+                        <i data-lucide="image" class="lucide"></i> من المعرض
+                        <input type="file" name="brand_image" class="brand-image-input" accept="image/*" style="display:none;" onchange="previewBrandImage(this, <%= item.id %>)">
+                    </label>
+                    <input type="hidden" name="existing_brand_image" id="existing-brand-image-<%= item.id %>" value="">
+                    <img id="brand-image-preview-<%= item.id %>" class="brand-thumb" style="display:none;" alt="معاينة صورة البراند" onclick="openImageLightbox(this.src);">
+                    <span id="brand-image-status-<%= item.id %>" style="display:none; font-size:0.78rem; color: var(--text-muted);"></span>
+                    <button type="button" id="brand-ai-btn-<%= item.id %>" class="btn btn-outline btn-sm" style="display:none;" onclick="analyzeBrandImage(<%= item.id %>);">
+                        <i data-lucide="sparkles" class="lucide"></i> تعبئة تلقائية بالذكاء الاصطناعي
+                    </button>
+                    <span id="brand-ai-status-<%= item.id %>" style="display:none; font-size:0.78rem; color: var(--text-muted);"></span>
+                    <select name="store_id" class="store-select">
+                        <option value="">بدون تحديد محل</option>
+                        <% stores.forEach(function(s) { %>
+                            <option value="<%= s.id %>" data-lat="<%= s.lat || '' %>" data-lng="<%= s.lng || '' %>"><%= s.name %></option>
+                        <% }) %>
+                    </select>
+                    <input type="number" step="0.001" min="0" inputmode="decimal" name="price" placeholder="سعر الوحدة (اختياري)">
+                    <button type="submit" class="btn btn-success btn-sm">تأكيد الشراء</button>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="toggleBrandModal(<%= item.id %>)">إلغاء</button>
+                </form>
+            </div>
+        </div>
+
+        <%- include('item-edit-panel', { item: item, weekdayNames: weekdayNames, itemCategories: itemCategories, units: unitList, stores: stores, redirectTarget: redirectTarget }) %>
+        <%- include('item-move-panel', { item: item, availableLists: availableLists, redirectTarget: redirectTarget }) %>
+    </div>
+<% }) %>
+
+<div class="drawer-overlay" id="archive-drawer-overlay" onclick="toggleArchiveDrawer()"></div>
+<div class="lists-drawer archive-drawer" id="archive-drawer">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <button type="button" class="icon-btn" title="إغلاق" onclick="toggleArchiveDrawer()" style="font-size:1.3rem;"><i data-lucide="x" class="lucide"></i></button>
+        <div style="display:flex; gap:10px;">
+            <a href="<%= buildUrl({ sort: null }) %>" class="ajax-sort-link icon-btn" title="ترتيب حسب الأحدث" style="<%= activeSort === 'date' ? 'color:var(--primary);' : '' %>"><i data-lucide="calendar" class="lucide"></i></a>
+            <a href="<%= buildUrl({ sort: 'category' }) %>" class="ajax-sort-link icon-btn" title="ترتيب حسب التصنيف" style="<%= activeSort === 'category' ? 'color:var(--primary);' : '' %>"><i data-lucide="layout-grid" class="lucide"></i></a>
+        </div>
+    </div>
+
+<% if (archivedItems.length === 0) { %>
+    <p style="color: var(--text-muted);">لا توجد أغراض مؤرشفة.</p>
+<% } %>
+<%
+lastCategory = '__none__';
+let catGroupOpen = false;
+archivedItems.forEach(function(item) {
+    const isBought = item.status === 'bought';
+    if (activeSort === 'category') {
+        const cat = item.category || '';
+        if (cat !== lastCategory) {
+            if (catGroupOpen) { %></div><% }
+            lastCategory = cat;
+            const groupId = 'catgrp-archive-' + (cat || 'none') + '-' + listId;
+%>
+    <%- catHeaderHtml(catMap[cat], groupId) %>
+    <div class="collapsible-body" id="<%= groupId %>">
+<%
+            catGroupOpen = true;
+        }
+    }
+%>
+    <div class="item-row <%= isBought ? 'bought' : 'cancelled' %> no-expand" data-item-id="<%= item.id %>">
+        <div class="item-line">
+            <% if (isBought && item.last_brand_image) { %><img src="<%= item.last_brand_image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="openImageLightbox(this.src)"><% } %>
+            <span class="item-name"><%= item.name %></span>
+            <%- qtyLabel(item) %>
+            <% if (isBought && item.is_weekly) { %><i data-lucide="repeat" class="lucide icon-badge" title="أسبوعي - <%= weekdayNames[item.weekly_weekday] %>"></i><% } %>
+            <% if (isBought && item.hidden_from_shared) { %><i data-lucide="eye-off" class="lucide icon-badge" title="مخفي عن المشاركين"></i><% } %>
+        </div>
+        <% if (item.last_bought_at) { %>
+        <div class="item-sub">
+            آخر شراء: <%= String(item.last_bought_at).slice(0,10).split('-').reverse().join('-') + ' ' + String(item.last_bought_at).slice(11,16) %>
+            <% if (item.last_brand || item.last_brand_detail) { %>· البراند: <%= item.last_brand || item.last_brand_detail %><% if (item.last_brand && item.last_brand_detail) { %> (<%= item.last_brand_detail %>)<% } %><% } %>
+            <% if (item.last_store_name) { %>· المحل: <%= item.last_store_name %><% } %>
+            <% if (item.last_price !== null && item.last_price !== undefined) { %>· السعر: <%= priceQtyLabel(item.last_price, item.last_purchased_qty) %><% } %>
+            <% if (isBought && item.is_weekly && item.next_due_date) { %>· يرجع تلقائيًا: <%= String(item.next_due_date).split('-').reverse().join('-') %><% } %>
+        </div>
+        <% } %>
+        <div class="item-icons">
+            <button type="button" class="icon-btn" title="تعديل" onclick="toggleEditPanel(<%= item.id %>)"><i data-lucide="pencil" class="lucide"></i></button>
+            <% if (availableLists.length > 0) { %>
+                <button type="button" class="icon-btn" title="نقل أو نسخ لقائمة أخرى" onclick="toggleMovePanel(<%= item.id %>)"><i data-lucide="move" class="lucide"></i></button>
+            <% } %>
+            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/reopen" style="display:inline;">
+                <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                <button type="submit" class="icon-btn" title="<%= isBought ? 'إرجاع للنشطة' : 'استرجاع' %>"><i data-lucide="rotate-ccw" class="lucide"></i></button>
+            </form>
+            <% if (isBought && isOwner) { %>
+                <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/toggle-hidden" style="display:inline;">
+                    <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                    <button type="submit" class="icon-btn" title="<%= item.hidden_from_shared ? 'إظهار للمشاركين' : 'إخفاء عن المشاركين' %>"><i data-lucide="<%= item.hidden_from_shared ? 'eye' : 'eye-off' %>" class="lucide"></i></button>
+                </form>
+            <% } %>
+            <% if (isBought) { %>
+                <a href="/items/<%= item.id %>/history" class="icon-btn" title="سجل الشراء"><i data-lucide="bar-chart-2" class="lucide"></i></a>
+            <% } %>
+            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذا الغرض نهائيًا؟');">
+                <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                <button type="submit" class="icon-btn" title="حذف"><i data-lucide="trash-2" class="lucide"></i></button>
+            </form>
+        </div>
+        <%- include('item-edit-panel', { item: item, weekdayNames: weekdayNames, itemCategories: itemCategories, units: unitList, stores: stores, redirectTarget: redirectTarget }) %>
+        <%- include('item-move-panel', { item: item, availableLists: availableLists, redirectTarget: redirectTarget }) %>
+    </div>
+<% })
+if (catGroupOpen) { %></div><% } %>
+</div>
+
+<script>
+    function toggleBuyPanel(id) {
+        var el = document.getElementById('buy-panel-' + id);
+        if (el) {
+            el.classList.toggle('open');
+            if (el.classList.contains('open')) applyCurrentStoreToOpenPanels();
+        }
+    }
+    // forceNew: opened via "إضافة علامة تجارية" specifically for a brand
+    // that isn't already offered as a one-tap re-buy in the chooser — starts
+    // on "+ براند جديد" with a blank name, instead of showing whatever past
+    // profile happened to be selected last.
+    function toggleBrandModal(id, forceNew) {
+        var el = document.getElementById('brand-modal-' + id);
+        if (el) {
+            el.classList.toggle('open');
+            if (el.classList.contains('open')) {
+                applyCurrentStoreToOpenPanels();
+                if (forceNew) {
+                    var select = el.querySelector('select[name="brand_select"]');
+                    if (select) {
+                        select.value = '__custom__';
+                        handleBrandSelectChange(select, id);
+                    }
+                }
+            }
+        }
+    }
+    // Tapping the item row itself only reveals/hides the secondary action
+    // icons (edit/move/cancel/hide/history/delete) — independent of the buy
+    // panel, which opens only via its own dedicated "تم الشراء" button.
+    function toggleItemControls(id) {
+        var extra = document.getElementById('item-icons-extra-' + id);
+        if (extra) extra.style.display = (extra.style.display === 'flex') ? 'none' : 'flex';
+    }
+    function toggleEditPanel(id) {
+        var el = document.getElementById('edit-panel-' + id);
+        if (el) el.classList.toggle('open');
+    }
+    function toggleMovePanel(id) {
+        var el = document.getElementById('move-panel-' + id);
+        if (el) el.classList.toggle('open');
+    }
+    // "تم شراؤها"/"ملغاة" live in their own side panel (sliding from the
+    // opposite side of the main nav drawer) so they don't take up vertical
+    // space in the main list by default.
+    function toggleArchiveDrawer() {
+        var drawer = document.getElementById('archive-drawer');
+        var overlay = document.getElementById('archive-drawer-overlay');
+        if (drawer) drawer.classList.toggle('open');
+        if (overlay) overlay.classList.toggle('open');
+    }
+
+    // The floating action buttons can sit over the last item(s) in a list,
+    // especially on a short screen — this tucks them away behind a small
+    // handle tab at the edge, shown/hidden on demand instead of removed.
+    function toggleFabGroup(listId) {
+        var group = document.getElementById('fab-group-' + listId);
+        var handle = document.getElementById('fab-handle-' + listId);
+        if (group) group.classList.toggle('hidden');
+        if (handle) handle.classList.toggle('collapsed');
+    }
+
+    function toggleAddItemModal(listId) {
+        var overlay = document.getElementById('add-item-overlay-' + listId);
+        if (overlay) overlay.classList.toggle('open');
+    }
+    // "+" next to a category header in the active list: opens the same
+    // add-item modal (so picking an existing name or typing a new one both
+    // still work normally) but with that category pre-selected, and focuses
+    // the name field so typing can start immediately.
+    function openAddItemModalForCategory(listId, categoryKey) {
+        var overlay = document.getElementById('add-item-overlay-' + listId);
+        if (!overlay) return;
+        if (!overlay.classList.contains('open')) overlay.classList.add('open');
+        var categorySelect = document.getElementById('item-category-' + listId);
+        if (categorySelect) categorySelect.value = categoryKey;
+        var nameInput = document.getElementById('item-name-' + listId);
+        if (nameInput) nameInput.focus();
+    }
+
+    function toggleCategoryModal(listId) {
+        var el = document.getElementById('category-modal-' + listId);
+        if (el) el.classList.toggle('open');
+    }
+    // Picking "+ تصنيف جديد" opens the add-category modal instead of actually
+    // selecting it as the item's category — reset the select back to empty
+    // right away so a cancelled/abandoned add doesn't leave a bogus value.
+    function handleCategorySelectChange(select, listId) {
+        if (select.value === '__new_category__') {
+            select.value = '';
+            toggleCategoryModal(listId);
+        }
+    }
+    function updateCategoryIconPreview(listId) {
+        var select = document.getElementById('category-icon-select-' + listId);
+        var preview = document.getElementById('category-icon-preview-' + listId);
+        if (!select || !preview) return;
+        preview.setAttribute('data-lucide', select.value);
+        if (window.renderIcons) renderIcons();
+    }
+
+    function toggleCategorySuggestModal(listId) {
+        var el = document.getElementById('category-suggest-modal-' + listId);
+        if (el) el.classList.toggle('open');
+    }
+    // Asks the AI for up to 3 new category suggestions based on this list's
+    // currently-uncategorized active items, and lets the person add any of
+    // them (creating the category and assigning it to those items at once)
+    // with a single click per suggestion.
+    function suggestCategoriesForList(listId) {
+        toggleCategorySuggestModal(listId);
+        var body = document.getElementById('category-suggest-body-' + listId);
+        body.innerHTML = '<p style="color: var(--text-muted); font-size:0.9rem;">جاري التحليل بالذكاء الاصطناعي...</p>';
+        fetch('/lists/' + listId + '/categories/suggest', { method: 'POST' })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var suggestions = (data && data.suggestions) || [];
+                if (suggestions.length === 0) {
+                    body.innerHTML = '<p style="color: var(--text-muted); font-size:0.9rem;">لا توجد اقتراحات حاليًا (إما كل الأغراض مصنفة، أو تعذّر التحليل).</p>';
+                    return;
+                }
+                body.innerHTML = '';
+                suggestions.forEach(function(s) {
+                    var card = document.createElement('div');
+                    card.className = 'card';
+                    card.style.marginBottom = '10px';
+                    card.innerHTML =
+                        '<div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">' +
+                        '<span><i data-lucide="' + s.icon + '" class="lucide"></i> ' + s.label + '</span>' +
+                        '<button type="button" class="btn btn-success btn-sm">+ إضافة</button>' +
+                        '</div>' +
+                        '<p style="font-size:0.82rem; color: var(--text-muted); margin:6px 0 0;">' + s.items.join('، ') + '</p>';
+                    card.querySelector('button').onclick = function() {
+                        applyCategorySuggestion(listId, s, card);
+                    };
+                    body.appendChild(card);
+                });
+                if (window.renderIcons) renderIcons();
+            })
+            .catch(function() {
+                body.innerHTML = '<p style="color: var(--text-muted); font-size:0.9rem;">تعذّر الاتصال بالذكاء الاصطناعي.</p>';
+            });
+    }
+    function applyCategorySuggestion(listId, suggestion, cardEl) {
+        fetch('/lists/' + listId + '/categories/apply-suggestion', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label: suggestion.label, icon: suggestion.icon, items: suggestion.items }),
+        })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (data && data.ok) {
+                    cardEl.remove();
+                    fetch(window.location.href)
+                        .then(function(res) { return res.text(); })
+                        .then(function(html) { applyFetchedHtml(html, null); });
+                }
+            })
+            .catch(function() {});
+    }
+
+    // Custom item-name autocomplete, replacing the native <datalist> approach.
+    // Datalist support is unreliable on mobile — on several Android/iOS
+    // keyboards it shows no suggestions at all, and worse, having a `list`
+    // attribute on the input can make the on-screen keyboard dismiss itself
+    // when switching input language. This is a plain JS/DOM dropdown instead,
+    // which behaves identically everywhere and never touches the keyboard.
+    function setupNameAutocompletes() {
+        document.querySelectorAll('.autocomplete-wrap input[data-known-items]').forEach(function(input) {
+            if (input.dataset.autocompleteBound) return;
+            input.dataset.autocompleteBound = '1';
+            var box = input.parentElement.querySelector('.autocomplete-list');
+            if (!box) return;
+            var items = [];
+            try { items = JSON.parse(input.getAttribute('data-known-items') || '[]'); } catch (e) {}
+
+            function render() {
+                var q = input.value.trim();
+                box.innerHTML = '';
+                if (!q) { box.style.display = 'none'; return; }
+                var matches = items.filter(function(it) { return it.name.indexOf(q) !== -1; }).slice(0, 8);
+                if (matches.length === 0) { box.style.display = 'none'; return; }
+                matches.forEach(function(it) {
+                    var opt = document.createElement('div');
+                    opt.className = 'autocomplete-item';
+                    opt.textContent = it.name;
+                    opt.onmousedown = function(e) {
+                        e.preventDefault();
+                        input.value = it.name;
+                        box.style.display = 'none';
+                        // Picking a known item fills in the category it was
+                        // last entered under (real history, not an AI guess) —
+                        // same "never overwrite an existing choice" rule as
+                        // the AI fill, so a manual pick always wins.
+                        var listId = input.id.replace('item-name-', '');
+                        var categorySelect = document.getElementById('item-category-' + listId);
+                        if (categorySelect && !categorySelect.value && it.category) {
+                            categorySelect.value = it.category;
+                        }
+                    };
+                    box.appendChild(opt);
+                });
+                box.style.display = 'block';
+            }
+            input.addEventListener('input', render);
+            input.addEventListener('focus', render);
+            input.addEventListener('blur', function() {
+                setTimeout(function() { box.style.display = 'none'; }, 150);
+            });
+        });
+    }
+
+    // Best-effort AI category guess when adding a new item: fires once the
+    // name field loses focus, and only fills the category if it's still
+    // empty — so it never overwrites a choice made by hand (or a previous
+    // suggestion), satisfying "AI suggests, but I can always change it".
+    // Maps the server's failure `reason` code to a specific Arabic message,
+    // so a connection/timeout problem reads differently from "no API key
+    // configured" or "the AI just didn't recognize this item" — otherwise
+    // every case looks identical and is impossible to tell apart without
+    // digging into the server's own logs.
+    var CATEGORY_AI_FAILURE_MESSAGES = {
+        no_api_key: 'التصنيف بالذكاء الاصطناعي غير مُفعّل على الخادم (لا يوجد مفتاح API)',
+        timeout: 'انتهت مهلة الاتصال بخدمة الذكاء الاصطناعي — جرّب لاحقًا',
+        network_error: 'تعذّر الاتصال بخدمة الذكاء الاصطناعي — تحقق من اتصال الخادم بالإنترنت',
+        no_match: 'لم يتعرّف الذكاء الاصطناعي على تصنيف مناسب لهذا الغرض — اختر يدويًا',
+        // DeepSeek-specific HTTP codes, each with a distinct real cause —
+        // 402 in particular is NOT a bad key, it's an empty account balance.
+        http_401: 'المفتاح مرفوض من DeepSeek (401) — تحقق من أنه صحيح وغير منتهي',
+        http_402: 'رصيد حساب DeepSeek فارغ (402) — المفتاح صحيح لكن يلزم شحن الحساب من platform.deepseek.com',
+        http_429: 'تم تجاوز حد الطلبات المسموح به مؤقتًا (429) — جرّب بعد قليل',
+    };
+    function categoryAiFailureMessage(reason) {
+        if (CATEGORY_AI_FAILURE_MESSAGES[reason]) return CATEGORY_AI_FAILURE_MESSAGES[reason];
+        if (reason && reason.indexOf('http_') === 0) {
+            return 'رفضت خدمة الذكاء الاصطناعي الطلب (كود ' + reason.slice(5) + ')';
+        }
+        return 'تعذّر التصنيف التلقائي — اختر التصنيف يدويًا';
+    }
+    function setupCategoryAI() {
+        document.querySelectorAll('.autocomplete-wrap input[data-known-items]').forEach(function(input) {
+            if (input.dataset.categoryAiBound) return;
+            input.dataset.categoryAiBound = '1';
+            var listId = input.id.replace('item-name-', '');
+            var categorySelect = document.getElementById('item-category-' + listId);
+            var status = document.getElementById('item-category-ai-status-' + listId);
+            if (!categorySelect) return;
+            input.addEventListener('blur', function() {
+                var name = input.value.trim();
+                if (!name || categorySelect.value) return;
+                if (status) status.textContent = 'جاري التصنيف بالذكاء الاصطناعي...';
+                fetch('/items/classify-category', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ name: name }),
+                })
+                    .then(function(res) { return res.json(); })
+                    .then(function(data) {
+                        if (data && data.category && !categorySelect.value) {
+                            categorySelect.value = data.category;
+                            if (status) {
+                                status.innerHTML = '<i data-lucide="sparkles" class="lucide"></i> صُنّف بالذكاء الاصطناعي، يمكنك تغييره';
+                                if (window.renderIcons) renderIcons();
+                            }
+                        } else if (status) {
+                            status.textContent = categoryAiFailureMessage(data && data.reason);
+                        }
+                    })
+                    .catch(function() {
+                        if (status) status.textContent = 'تعذّر الاتصال بالخادم — تحقق من اتصالك بالإنترنت';
+                    });
+            });
+            // Any manual change to the category clears the AI status note,
+            // since it no longer reflects what's actually selected.
+            categorySelect.addEventListener('change', function() {
+                if (status) status.textContent = '';
+            });
+        });
+    }
+
+    // Downscales + re-encodes a photo client-side before it's ever uploaded.
+    // A modern phone camera photo picked from the gallery is routinely 5-15MB;
+    // uploading that over a slow mobile connection is what made the "صورة من
+    // المعرض" path feel very slow. Shrinking to a reasonable max dimension
+    // (the server resizes further anyway, see saveBrandImage) cuts that to a
+    // few hundred KB, which is most of the actual time difference.
+    function compressImageFile(file, maxDim, quality) {
+        return new Promise(function(resolve) {
+            if (!file.type || file.type.indexOf('image/') !== 0 || typeof DataTransfer === 'undefined') {
+                resolve(file);
+                return;
+            }
+            var img = new Image();
+            var url = URL.createObjectURL(file);
+            img.onload = function() {
+                URL.revokeObjectURL(url);
+                var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+                var canvas = document.createElement('canvas');
+                canvas.width = Math.round(img.width * scale);
+                canvas.height = Math.round(img.height * scale);
+                var ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                canvas.toBlob(function(blob) {
+                    if (!blob) { resolve(file); return; }
+                    resolve(new File([blob], (file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }));
+                }, 'image/jpeg', quality);
+            };
+            img.onerror = function() { URL.revokeObjectURL(url); resolve(file); };
+            img.src = url;
+        });
+    }
+
+    function previewBrandImage(input, id) {
+        if (!input.files || !input.files[0]) return;
+        // Camera capture and gallery pick are two separate <input> elements
+        // sharing name="brand_image" — clear the other one so a form submit
+        // never carries two files under the same field name at once.
+        var form = input.closest('form');
+        if (form) {
+            form.querySelectorAll('.brand-image-input').forEach(function(other) {
+                if (other !== input) other.value = '';
+            });
+        }
+        var status = document.getElementById('brand-image-status-' + id);
+        if (status) { status.textContent = 'جاري تجهيز الصورة...'; status.style.display = 'inline'; }
+        compressImageFile(input.files[0], 1600, 0.82).then(function(compressed) {
+            try {
+                var dt = new DataTransfer();
+                dt.items.add(compressed);
+                input.files = dt.files;
+            } catch (e) {}
+            if (status) status.style.display = 'none';
+            var img = document.getElementById('brand-image-preview-' + id);
+            if (img) {
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    img.src = e.target.result;
+                    img.style.display = 'inline-block';
+                };
+                reader.readAsDataURL(compressed);
+            }
+            // A freshly chosen photo always wins over whatever was carried
+            // over from a past brand selection.
+            var existingField = document.getElementById('existing-brand-image-' + id);
+            if (existingField) existingField.value = '';
+
+            var aiBtn = document.getElementById('brand-ai-btn-' + id);
+            if (aiBtn) aiBtn.style.display = 'inline-flex';
+        });
+    }
+
+    // Each dropdown entry is one distinct (brand, detail, store) profile ever
+    // bought for this item — picking one pre-fills its detail/price/store/photo
+    // exactly as last recorded, a quick "same as last time" shortcut. Every
+    // field stays fully editable afterward, and since "buy" always inserts a
+    // fresh purchase row, any edits are simply saved as a new purchase (and
+    // automatically become their own selectable profile next time) — the
+    // original profile's history is never overwritten.
+    function handleBrandSelectChange(select, id) {
+        var customInput = document.getElementById('brand-custom-' + id);
+        if (select.value === '') {
+            if (customInput) customInput.style.display = 'none';
+            return;
+        }
+
+        var opt = select.options[select.selectedIndex];
+        // A picked past profile's brand name (possibly empty — some past
+        // purchases only ever had a detail/size noted, no separate brand
+        // name) always lands here, editable; "+ براند جديد" starts blank.
+        // Either way this field is what actually gets saved as the brand.
+        var isPast = select.value.indexOf('__past__') === 0;
+        if (customInput) {
+            customInput.style.display = 'block';
+            customInput.value = isPast ? (opt.getAttribute('data-brand') || '') : '';
+        }
+
+        var detailInput = document.getElementById('brand-detail-' + id);
+        if (detailInput) detailInput.value = isPast ? (opt.getAttribute('data-detail') || '') : '';
+
+        var priceInput = document.querySelector('#brand-modal-' + id + ' input[name="price"]');
+        if (priceInput) priceInput.value = isPast ? (opt.getAttribute('data-price') || '') : '';
+
+        var qtyInput = document.getElementById('purchased-qty-' + id);
+        if (qtyInput) qtyInput.value = isPast ? (opt.getAttribute('data-qty') || '') : '';
+
+        var storeSelect = document.querySelector('#brand-modal-' + id + ' select[name="store_id"]');
+        if (storeSelect) storeSelect.value = isPast ? (opt.getAttribute('data-store') || '') : '';
+
+        var img = document.getElementById('brand-image-preview-' + id);
+        var existingField = document.getElementById('existing-brand-image-' + id);
+        var image = isPast ? opt.getAttribute('data-image') : '';
+        document.querySelectorAll('#brand-modal-' + id + ' input[name="brand_image"]').forEach(function(inp) { inp.value = ''; });
+        if (image) {
+            if (img) { img.src = image; img.style.display = 'inline-block'; }
+            if (existingField) existingField.value = image;
+        } else {
+            if (img) { img.style.display = 'none'; img.src = ''; }
+            if (existingField) existingField.value = '';
+        }
+    }
+
+    // Best-effort AI pre-fill from the photo (brand name + a short detail like
+    // size/variant), run only when the person explicitly asks for it via the
+    // "تعبئة تلقائية" button — never automatically on picking a file. Purely a
+    // suggestion: brand_select/brand_custom/brand_detail stay normal editable
+    // fields, so anything it fills in can still be corrected or replaced by
+    // hand, and a failed/slow analysis just leaves them blank.
+    function analyzeBrandImage(id) {
+        // Two separate inputs now share name="brand_image" (camera + gallery,
+        // see previewBrandImage) — find whichever one actually has a file,
+        // not just the first in DOM order.
+        var fileInput = Array.from(document.querySelectorAll('#brand-modal-' + id + ' input[name="brand_image"]'))
+            .find(function(inp) { return inp.files && inp.files.length > 0; });
+        var statusEl = document.getElementById('brand-ai-status-' + id);
+        if (!fileInput || !fileInput.files || !fileInput.files[0]) return;
+        if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = 'جارٍ التعرف على البراند بالذكاء الاصطناعي...'; }
+        var fd = new FormData();
+        fd.append('brand_image', fileInput.files[0]);
+        fetch('/brand-image/analyze', { method: 'POST', body: fd })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (!data || (!data.brand && !data.detail)) {
+                    if (statusEl) {
+                        statusEl.textContent = 'تعذّر التعرف على البراند تلقائيًا — يمكنك تعبئته يدويًا.';
+                        setTimeout(function() { statusEl.style.display = 'none'; }, 4000);
+                    }
+                    return;
+                }
+                if (statusEl) statusEl.style.display = 'none';
+                if (data.brand) {
+                    var select = document.querySelector('#brand-modal-' + id + ' select[name="brand_select"]');
+                    var customInput = document.getElementById('brand-custom-' + id);
+                    if (select && customInput) {
+                        select.value = '__custom__';
+                        customInput.style.display = 'block';
+                        customInput.value = data.brand;
+                    }
+                }
+                if (data.detail) {
+                    var detailInput = document.getElementById('brand-detail-' + id);
+                    if (detailInput) detailInput.value = data.detail;
+                }
+            })
+            .catch(function() {
+                if (statusEl) {
+                    statusEl.textContent = 'تعذّر الاتصال بخدمة الذكاء الاصطناعي — يمكنك التعبئة يدويًا.';
+                    setTimeout(function() { statusEl.style.display = 'none'; }, 4000);
+                }
+            });
+    }
+
+    function haversineKm(lat1, lon1, lat2, lon2) {
+        var R = 6371;
+        var dLat = (lat2 - lat1) * Math.PI / 180;
+        var dLon = (lon2 - lon1) * Math.PI / 180;
+        var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+    function sortStoresByDistance(lat, lng) {
+        document.querySelectorAll('.store-select').forEach(function(select) {
+            var opts = Array.from(select.querySelectorAll('option[value]:not([value=""])'));
+            opts.sort(function(a, b) {
+                var aLat = parseFloat(a.getAttribute('data-lat')), aLng = parseFloat(a.getAttribute('data-lng'));
+                var bLat = parseFloat(b.getAttribute('data-lat')), bLng = parseFloat(b.getAttribute('data-lng'));
+                var aHas = !isNaN(aLat) && !isNaN(aLng);
+                var bHas = !isNaN(bLat) && !isNaN(bLng);
+                if (!aHas && !bHas) return 0;
+                if (!aHas) return 1;
+                if (!bHas) return -1;
+                return haversineKm(lat, lng, aLat, aLng) - haversineKm(lat, lng, bLat, bLng);
+            });
+            opts.forEach(function(o) { select.appendChild(o); });
+        });
+    }
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(pos) {
+            sortStoresByDistance(pos.coords.latitude, pos.coords.longitude);
+        }, function() {}, { timeout: 4000 });
+    }
+
+    // "Current store" locator: remembers (per-browser, via localStorage) which
+    // store the person is shopping at right now, suggested from their live
+    // location against the stores already registered with a lat/lng, and
+    // auto-fills every buy-panel's store select with it once confirmed.
+    var STORE_LOCATOR_KEY = 'dukanlist_current_store';
+    var STORE_NEAR_RADIUS_KM = 0.3;
+
+    function getKnownStoresFromDOM() {
+        var select = document.querySelector('.store-select');
+        if (!select) return [];
+        return Array.from(select.querySelectorAll('option[value]:not([value=""])')).map(function(o) {
+            return {
+                id: o.value,
+                name: o.textContent.trim(),
+                lat: parseFloat(o.getAttribute('data-lat')),
+                lng: parseFloat(o.getAttribute('data-lng'))
+            };
+        });
+    }
+
+    function getSavedCurrentStore() {
+        try { return JSON.parse(localStorage.getItem(STORE_LOCATOR_KEY) || 'null'); } catch (e) { return null; }
+    }
+
+    function renderStoreLocatorState() {
+        var saved = getSavedCurrentStore();
+        var currentBox = document.getElementById('store-locator-current');
+        var idleBox = document.getElementById('store-locator-idle');
+        var triggerText = document.getElementById('store-locator-trigger-text');
+        if (saved && saved.id) {
+            if (currentBox) currentBox.style.display = 'flex';
+            if (idleBox) idleBox.style.display = 'none';
+            var nameEl = document.getElementById('store-locator-current-name');
+            if (nameEl) nameEl.textContent = saved.name;
+            if (triggerText) triggerText.textContent = 'تشتري الآن من: ' + saved.name;
+        } else {
+            if (currentBox) currentBox.style.display = 'none';
+            if (idleBox) idleBox.style.display = 'flex';
+            if (triggerText) triggerText.textContent = 'تحديد موقع التسوق';
+        }
+    }
+
+    function toggleStoreLocatorModal() {
+        var el = document.getElementById('store-locator-modal');
+        if (el) el.classList.toggle('open');
+    }
+
+    function hideStoreLocatorPanels() {
+        var el = document.getElementById('store-locator-suggestion');
+        if (el) el.style.display = 'none';
+    }
+
+    function dismissStoreLocator() {
+        hideStoreLocatorPanels();
+    }
+
+    // Lists every registered store within range (not just the nearest one) —
+    // more than one store can share essentially the same spot (a mall, a
+    // row of shops), so the person picks which one they're actually in.
+    function refreshStoreLocation(reason) {
+        if (!navigator.geolocation) return;
+        hideStoreLocatorPanels();
+        navigator.geolocation.getCurrentPosition(function(pos) {
+            var lat = pos.coords.latitude, lng = pos.coords.longitude;
+            var candidates = getKnownStoresFromDOM()
+                .filter(function(s) { return !isNaN(s.lat) && !isNaN(s.lng); })
+                .map(function(s) { return { store: s, dist: haversineKm(lat, lng, s.lat, s.lng) }; })
+                .filter(function(c) { return c.dist <= STORE_NEAR_RADIUS_KM; })
+                .sort(function(a, b) { return a.dist - b.dist; });
+
+            var latEl = document.getElementById('store-locator-lat');
+            var lngEl = document.getElementById('store-locator-lng');
+            if (latEl) latEl.value = lat;
+            if (lngEl) lngEl.value = lng;
+
+            var gapNote = reason === 'gap'
+                ? 'مرّ وقت طويل منذ آخر عملية شراء — ربما انتقلت إلى محل آخر. '
+                : '';
+            var intro = document.getElementById('store-locator-suggest-intro');
+            var list = document.getElementById('store-locator-suggest-list');
+            if (list) list.innerHTML = '';
+            if (candidates.length > 0) {
+                if (intro) {
+                    intro.textContent = gapNote + (candidates.length === 1
+                        ? 'أنت قريب من محل مسجّل — هل تتسوق من هنا الآن؟'
+                        : 'أنت قريب من عدة محلات مسجّلة — اختر المحل الذي تتسوق منه الآن:');
+                }
+                candidates.forEach(function(c) {
+                    var row = document.createElement('div');
+                    row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px;';
+                    var span = document.createElement('span');
+                    span.style.fontSize = '0.88rem';
+                    span.textContent = c.store.name;
+                    var btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn btn-success btn-sm';
+                    btn.innerHTML = '<i data-lucide="check" class="lucide"></i> هذا المحل';
+                    btn.onclick = function() { confirmCurrentStore(c.store); };
+                    row.appendChild(span);
+                    row.appendChild(btn);
+                    if (list) list.appendChild(row);
+                });
+                if (window.renderIcons) renderIcons();
+            } else if (intro) {
+                intro.textContent = gapNote + 'لا يوجد محل مسجّل قريب منك.';
+            }
+
+            var sugEl = document.getElementById('store-locator-suggestion');
+            if (sugEl) sugEl.style.display = 'block';
+        }, function() {}, { timeout: 8000 });
+    }
+
+    function confirmCurrentStore(store) {
+        try {
+            localStorage.setItem(STORE_LOCATOR_KEY, JSON.stringify({ id: store.id, name: store.name }));
+        } catch (e) {}
+        hideStoreLocatorPanels();
+        renderStoreLocatorState();
+        applyCurrentStoreToOpenPanels();
+    }
+
+    function clearCurrentStore() {
+        try { localStorage.removeItem(STORE_LOCATOR_KEY); } catch (e) {}
+        renderStoreLocatorState();
+    }
+
+    // If a "current store" is set and more than this long passes between two
+    // purchases, it's a sign the person likely moved to a different store
+    // without updating it — re-check location instead of silently attaching
+    // the next purchase to the old one.
+    var SHOPPING_GAP_MS = 10 * 60 * 1000;
+    // A longer gap than this means the shopping *trip* itself likely ended —
+    // the running total is a per-trip thing, so rather than silently keep
+    // adding to a stale total, the person is asked whether it's still the
+    // same trip.
+    var SHOPPING_SESSION_GAP_MS = 15 * 60 * 1000;
+    // Persisted (not just an in-memory var) so the running total and last-buy
+    // timing survive a page reload or navigating away and back — a real
+    // shopping trip spans more than one uninterrupted page view.
+    var SHOPPING_SESSION_KEY = 'dukanlist_shopping_session';
+    function getShoppingSession() {
+        try {
+            var saved = JSON.parse(localStorage.getItem(SHOPPING_SESSION_KEY) || 'null');
+            return saved && typeof saved.total === 'number' ? saved : { total: 0, lastAt: null };
+        } catch (e) { return { total: 0, lastAt: null }; }
+    }
+    function saveShoppingSession(session) {
+        try { localStorage.setItem(SHOPPING_SESSION_KEY, JSON.stringify(session)); } catch (e) {}
+    }
+
+    // Single entry point called after every successful purchase: both gap
+    // checks need the time since the PREVIOUS purchase, so this computes
+    // that once before updating lastAt for next time — doing the checks
+    // separately would have each one clobber the timing for the other.
+    function handleBuySuccess(price, qty) {
+        var now = Date.now();
+        var session = getShoppingSession();
+        var gapMs = session.lastAt ? now - session.lastAt : null;
+
+        var savedStore = getSavedCurrentStore();
+        if (savedStore && savedStore.id && gapMs !== null && gapMs > SHOPPING_GAP_MS) {
+            refreshStoreLocation('gap');
+        }
+
+        if (session.total > 0 && gapMs !== null && gapMs > SHOPPING_SESSION_GAP_MS) {
+            var sameTrip = confirm('مرّ وقت طويل منذ آخر عملية شراء. هل ما زلت في نفس جلسة التسوق؟');
+            if (!sameTrip) session.total = 0;
+        }
+        // price is always a single unit's price — quantity defaults to 1
+        // when not given, same rule used everywhere else this pair shows up.
+        if (price !== null && !isNaN(price)) {
+            var effectiveQty = qty !== null && !isNaN(qty) ? qty : 1;
+            session.total += price * effectiveQty;
+        }
+        session.lastAt = now;
+        saveShoppingSession(session);
+        renderShoppingSessionTotal();
+    }
+
+    function renderShoppingSessionTotal() {
+        var card = document.getElementById('shopping-session-card');
+        var val = document.getElementById('shopping-session-total');
+        if (!card || !val) return;
+        var session = getShoppingSession();
+        if (session.total > 0) {
+            card.style.display = 'flex';
+            val.textContent = session.total.toFixed(3);
+        } else {
+            card.style.display = 'none';
+        }
+    }
+    function resetShoppingSession() {
+        saveShoppingSession({ total: 0, lastAt: null });
+        renderShoppingSessionTotal();
+    }
+
+    function applyCurrentStoreToOpenPanels() {
+        var saved = getSavedCurrentStore();
+        if (!saved || !saved.id) return;
+        document.querySelectorAll('.store-select').forEach(function(select) {
+            if (select.querySelector('option[value="' + saved.id + '"]')) {
+                select.value = saved.id;
+            }
+        });
+        document.querySelectorAll('.quick-buy-store').forEach(function(input) {
+            input.value = saved.id;
+        });
+    }
+
+    // If we just got redirected back here after adding a new store from the
+    // store-locator's "add another store here" form, set it as the current
+    // shopping location right away — otherwise the person has to press
+    // "تحديد الموقع" a second time just to find the store they only just added.
+    (function () {
+        var params = new URLSearchParams(window.location.search);
+        var newStoreId = params.get('new_store_id');
+        var newStoreName = params.get('new_store_name');
+        if (newStoreId && newStoreName) {
+            try {
+                localStorage.setItem(STORE_LOCATOR_KEY, JSON.stringify({ id: newStoreId, name: newStoreName }));
+            } catch (e) {}
+            params.delete('new_store_id');
+            params.delete('new_store_name');
+            var qs = params.toString();
+            history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+        }
+    })();
+
+    renderStoreLocatorState();
+    renderShoppingSessionTotal();
+    if (!getSavedCurrentStore()) refreshStoreLocation();
+    setupNameAutocompletes();
+    setupCategoryAI();
+
+    // Parses a full page response and, if it carries an #items-list-root,
+    // swaps just that fragment in and re-runs everything that depends on the
+    // DOM it replaced (icons, the store-locator badge, buy-panel pre-fill).
+    // Shared by both the item-action AJAX handler and the live-sync poller.
+    function applyFetchedHtml(html, fallbackUrl) {
+        var root = document.getElementById('items-list-root');
+        if (!root) return false;
+
+        // Remember which collapsible sections (bought/cancelled/add-item box,
+        // category groups) AND the archive drawer (+ its overlay) were open
+        // before the swap, keyed by stable id, so acting on an item — e.g.
+        // restoring it from inside the open drawer — doesn't look like it
+        // "closed" something the person had deliberately opened. This only
+        // re-applies the visual state, it changes no behavior.
+        var openIds = Array.from(root.querySelectorAll('.collapsible-body.open, .archive-drawer.open, #archive-drawer-overlay.open'))
+            .map(function(el) { return el.id; })
+            .filter(Boolean);
+
+        var temp = document.createElement('div');
+        temp.innerHTML = html;
+        var newRoot = temp.querySelector('#items-list-root');
+        if (!newRoot) {
+            if (fallbackUrl) window.location.href = fallbackUrl;
+            return false;
+        }
+        if (root.innerHTML === newRoot.innerHTML) return false;
+        root.innerHTML = newRoot.innerHTML;
+
+        openIds.forEach(function(id) {
+            var body = document.getElementById(id);
+            if (!body) return;
+            body.classList.add('open');
+            var btn = root.querySelector('[onclick*="\'' + id + '\'"]');
+            if (btn) btn.classList.add('open');
+        });
+
+        if (window.renderIcons) renderIcons();
+        renderStoreLocatorState();
+        renderShoppingSessionTotal();
+        applyCurrentStoreToOpenPanels();
+        setupNameAutocompletes();
+        setupCategoryAI();
+        setupAjaxSortLinks();
+        return true;
+    }
+
+    // Fetches a filter/sort URL (sort, hidden-items filter, store filter, ...)
+    // and swaps it in instead of a real navigation, so scroll position and
+    // open panels survive. Keeps the address bar in sync too — otherwise
+    // anything that refetches "the current page" (the live-sync poller, a
+    // later action's fallback, etc.) would silently fetch the OLD filter
+    // state and wipe out this one.
+    function navigateAjax(url) {
+        fetch(url)
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                applyFetchedHtml(html, url);
+                history.replaceState(null, '', url);
+            })
+            .catch(function() { window.location.href = url; });
+    }
+
+    // The date/category sort icons are plain <a href> for a no-JS fallback,
+    // but normally intercepted here so re-sorting the archive doesn't trigger
+    // a full page reload. Bound directly on each link (not delegated on
+    // document) so it keeps working after any AJAX swap re-renders them.
+    function setupAjaxSortLinks() {
+        document.querySelectorAll('.ajax-sort-link').forEach(function(link) {
+            if (link.dataset.ajaxSortBound) return;
+            link.dataset.ajaxSortBound = '1';
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                navigateAjax(link.href);
+            });
+        });
+    }
+    setupAjaxSortLinks();
+
+    // Submit item actions (buy/cancel/restore/delete/hide/edit/move/add) over fetch
+    // instead of a real navigation, so scroll position and the current sort/filter
+    // (?sort=...) survive the action instead of being lost to a full page reload.
+    document.addEventListener('submit', function(e) {
+        var form = e.target;
+        if (!form.matches('[data-ajax-item-action]')) return;
+        e.preventDefault();
+
+        if (!document.getElementById('items-list-root')) { form.submit(); return; }
+
+        // A form can have more than one submit button targeting different
+        // routes via formaction (e.g. move vs. copy, sharing one target_list_id
+        // select). Read the raw formaction ATTRIBUTE (not the .formAction IDL
+        // property) — per spec, .formAction defaults to the CURRENT PAGE URL
+        // (not the form's action) when the attribute is absent, which would
+        // silently misroute every ordinary submit button (buy, cancel, delete,
+        // edit, move, ...) to this page. The raw attribute is null when unset,
+        // and a root-relative path like "/items/99/copy" works fine with fetch().
+        var actionUrl = (e.submitter && e.submitter.getAttribute('formaction')) || form.action;
+        var isBuy = /\/items\/(\d+)\/buy$/.test(actionUrl);
+        var row = form.closest('.item-row');
+        var itemId = row ? row.getAttribute('data-item-id') : null;
+        var itemName = row ? (row.querySelector('.item-name') || {}).textContent : '';
+        var redirectField = form.querySelector('input[name="redirect_to"]');
+        var currentRedirect = redirectField ? redirectField.value : (typeof redirectTarget !== 'undefined' ? redirectTarget : '');
+        var priceField = form.querySelector('input[name="price"]');
+        var buyPrice = priceField && priceField.value !== '' && !isNaN(Number(priceField.value)) ? Number(priceField.value) : null;
+        var qtyField = form.querySelector('input[name="purchased_qty"]');
+        var buyQty = qtyField && qtyField.value !== '' && !isNaN(Number(qtyField.value)) ? Number(qtyField.value) : null;
+
+        var doSubmit = function() {
+            // Sent as URL-encoded (not raw multipart FormData) because the server
+            // only parses application/x-www-form-urlencoded bodies; a raw FormData
+            // body silently drops every field server-side, including redirect_to.
+            // Exception: a form carrying an actual selected file (the optional
+            // brand photo) is sent as real multipart, which the buy route alone
+            // knows how to parse (via multer) — converting it to URLSearchParams
+            // would stringify the File and lose the image data entirely.
+            var hasFile = Array.from(form.querySelectorAll('input[type="file"]')).some(function(f) {
+                return f.files && f.files.length > 0;
+            });
+            var body = hasFile ? new FormData(form) : new URLSearchParams(new FormData(form));
+            fetch(actionUrl, { method: 'POST', body: body })
+                .then(function(res) { return res.text(); })
+                .then(function(html) {
+                    applyFetchedHtml(html, actionUrl);
+                    if (isBuy && itemId) {
+                        showUndoBuyToast(itemId, itemName, currentRedirect);
+                        handleBuySuccess(buyPrice, buyQty);
+                    }
+                })
+                .catch(function() { form.submit(); });
+        };
+
+        if (row) {
+            row.classList.add('item-action-flash');
+            setTimeout(doSubmit, 260);
+        } else {
+            doSubmit();
+        }
+    });
+
+    // A short-lived "تراجع عن الشراء" toast after marking an item bought —
+    // undoes the exact purchase just made (see /items/:id/undo-buy) rather
+    // than a generic reopen, so a mis-tap doesn't leave a stray price/brand
+    // entry behind in the item's purchase history.
+    var undoBuyTimer = null;
+    function ensureUndoToast() {
+        if (document.getElementById('undo-buy-toast')) return;
+        var toast = document.createElement('div');
+        toast.className = 'undo-toast';
+        toast.id = 'undo-buy-toast';
+        toast.innerHTML = '<span id="undo-buy-text"></span>' +
+            '<button type="button" class="btn btn-outline btn-sm" id="undo-buy-btn">تراجع</button>';
+        document.body.appendChild(toast);
+    }
+    function showUndoBuyToast(itemId, itemName, redirectTo) {
+        ensureUndoToast();
+        var toast = document.getElementById('undo-buy-toast');
+        document.getElementById('undo-buy-text').textContent = 'تم شراء ' + (itemName || 'الغرض');
+        var btn = document.getElementById('undo-buy-btn');
+        btn.onclick = function() {
+            clearTimeout(undoBuyTimer);
+            toast.classList.remove('open');
+            fetch('/items/' + itemId + '/undo-buy', {
+                method: 'POST',
+                body: new URLSearchParams({ redirect_to: redirectTo || '' }),
+            })
+                .then(function(res) { return res.text(); })
+                .then(function(html) { applyFetchedHtml(html, null); });
+        };
+        toast.classList.add('open');
+        clearTimeout(undoBuyTimer);
+        undoBuyTimer = setTimeout(function() { toast.classList.remove('open'); }, 5000);
+    }
+
+    // Live sync for shared lists: periodically re-fetches this same page and
+    // swaps in the items fragment if another member added/bought/cancelled
+    // something — but only while the tab is actually visible, and never while
+    // the person has a buy/edit/move panel or the store-locator prompt open,
+    // so an in-progress action is never yanked out from under them.
+    <% if (typeof isSharedList !== 'undefined' && isSharedList) { %>
+    (function() {
+        var POLL_INTERVAL_MS = 8000;
+        function hasOpenInteraction() {
+            if (document.querySelector('.buy-panel.open, .edit-panel.open, .move-panel.open')) return true;
+            var suggestion = document.getElementById('store-locator-suggestion');
+            if (suggestion && suggestion.style.display !== 'none') return true;
+            // Pause polling while the bought/cancelled drawer is open — even
+            // though its open state (and any expanded category group) does
+            // get restored after a refresh, a person actively reading through
+            // it shouldn't have the content swapped out from under them.
+            var archiveDrawer = document.getElementById('archive-drawer');
+            if (archiveDrawer && archiveDrawer.classList.contains('open')) return true;
+            // Pause while any modal (add item, add store) is open — its
+            // 'open' state is NOT in the preserved-ids list on purpose (a
+            // modal is meant to close once its action completes), so a
+            // mid-typing refresh would wipe out whatever was being entered.
+            if (document.querySelector('.modal-overlay.open')) return true;
+            return false;
+        }
+        function poll() {
+            if (document.visibilityState === 'visible' && !hasOpenInteraction()) {
+                fetch(window.location.href)
+                    .then(function(res) { return res.text(); })
+                    .catch(function() { return null; })
+                    .then(function(html) { if (html) applyFetchedHtml(html, null); });
+            }
+        }
+        setInterval(poll, POLL_INTERVAL_MS);
+    })();
+    <% } %>
+</script>

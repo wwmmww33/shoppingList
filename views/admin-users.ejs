@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>إدارة المستخدمين - قوائمنا</title>
+    <link rel="stylesheet" href="/style.css">
+    <%- include('partials/theme-init') %>
+</head>
+<body>
+    <%- include('partials/nav') %>
+    <div class="container">
+        <div class="card">
+            <h3 style="margin-top:0;">المستخدمون (<%= users.length %>)</h3>
+            <% users.forEach(function(u) { %>
+                <div class="list-row">
+                    <span>
+                        <%= u.name %> <span class="meta">(<%= u.email %>)</span>
+                        <% if (u.is_admin) { %><span class="badge">مدير</span><% } %>
+                        <% if (u.is_suspended) { %><span class="badge" style="background:var(--error-bg); color:var(--danger);">موقوف</span><% } %>
+                    </span>
+                    <% if (u.id !== user.id) { %>
+                        <div style="display:flex; gap:6px;">
+                            <% if (u.is_suspended) { %>
+                                <form method="POST" action="/admin/users/<%= u.id %>/activate" style="display:inline;">
+                                    <button type="submit" class="btn btn-success btn-sm">تفعيل</button>
+                                </form>
+                            <% } else { %>
+                                <form method="POST" action="/admin/users/<%= u.id %>/suspend" style="display:inline;">
+                                    <button type="submit" class="btn btn-outline btn-sm">إيقاف</button>
+                                </form>
+                            <% } %>
+                            <form method="POST" action="/admin/users/<%= u.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذا المستخدم وكل قوائمه نهائيًا؟');">
+                                <button type="submit" class="btn btn-danger btn-sm">حذف</button>
+                            </form>
+                        </div>
+                    <% } %>
+                </div>
+            <% }) %>
+        </div>
+    </div>
+</body>
+</html>

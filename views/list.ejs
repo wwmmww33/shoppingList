@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= list.title %> - قوائمنا</title>
+    <link rel="stylesheet" href="/style.css">
+    <%- include('partials/theme-init') %>
+</head>
+<body>
+    <%- include('partials/nav') %>
+    <div class="container">
+        <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <h2 style="margin:0;">
+                <%= list.title %>
+                <% if (isPinned) { %><span class="badge" title="مثبتة في الصفحة الرئيسية"><i data-lucide="pin" class="lucide"></i></span><% } %>
+            </h2>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button type="button" class="icon-btn" title="سجل الشراء السابق" onclick="toggleHistoryModal()">
+                    <i data-lucide="receipt" class="lucide"></i>
+                </button>
+                <% if (isOwner) { %>
+                    <button type="button" class="icon-btn" title="مشاركة القائمة" onclick="toggleShareModal()">
+                        <i data-lucide="users" class="lucide"></i>
+                        <% if (shares.length > 0) { %><span class="badge" style="margin-inline-start:2px;"><%= shares.length %></span><% } %>
+                    </button>
+                <% } %>
+                <form method="POST" action="/lists/<%= isPinned ? 'unpin' : (list.id + '/pin') %>" style="display:inline;">
+                    <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="pin" class="lucide"></i> <%= isPinned ? 'إلغاء التثبيت' : 'تثبيت في الرئيسية' %></button>
+                </form>
+                <% if (isOwner) { %>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="toggleRename()">تعديل الاسم</button>
+                    <form method="POST" action="/lists/<%= list.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف القائمة وكل محتوياتها نهائيًا؟');">
+                        <button type="submit" class="btn btn-danger btn-sm">حذف القائمة</button>
+                    </form>
+                <% } %>
+            </div>
+        </div>
+
+        <% if (isOwner) { %>
+        <form method="POST" action="/lists/<%= list.id %>/rename" id="rename-form" class="inline-form card" style="display:none;">
+            <input type="text" name="title" value="<%= list.title %>" required class="flex-1">
+            <button type="submit" class="btn btn-success btn-sm">حفظ</button>
+        </form>
+        <% } %>
+
+        <div id="items-list-root">
+        <%- include('partials/items-list', {
+            listId: list.id,
+            isOwner: isOwner,
+            activeItems: activeItems,
+            archivedItems: archivedItems,
+            stores: stores,
+            availableLists: availableLists,
+            knownItemNames: knownItemNames,
+            weekdayNames: weekdayNames,
+            itemCategories: itemCategories,
+            storeCategories: storeCategories,
+            units: units,
+            isSharedList: isSharedList,
+            redirectTo: ('/lists/' + list.id)
+        }) %>
+        </div>
+    </div>
+
+    <!-- Shopping history: one round (calendar day) at a time, most recent
+         first by default, switchable via the dropdown — rather than a long
+         scrolling page of every day ever shopped. -->
+    <div class="modal-overlay" id="history-modal" onclick="if (event.target === this) toggleHistoryModal()">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>سجل الشراء السابق</h3>
+                <button type="button" class="icon-btn" title="إغلاق" onclick="toggleHistoryModal()"><i data-lucide="x" class="lucide"></i></button>
+            </div>
+            <% if (shoppingHistory.length === 0) { %>
+                <p style="color: var(--text-muted);">لا يوجد سجل شراء بعد لهذه القائمة.</p>
+            <% } else { %>
+                <select id="history-day-select" onchange="showHistoryDay(this.value)" style="margin-bottom:12px;">
+                    <% shoppingHistory.forEach(function(day, idx) { %>
+                        <option value="<%= idx %>"><%= day.dateLabel %> (<%= day.items.length %> غرض)</option>
+                    <% }) %>
+                </select>
+                <% shoppingHistory.forEach(function(day, idx) { %>
+                    <div class="history-day" id="history-day-<%= idx %>" style="<%= idx === 0 ? '' : 'display:none;' %>">
+                        <div style="font-weight:600; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+                            <span><%= day.dateLabel %></span>
+                            <% if (day.total > 0) { %><span class="badge">الإجمالي: <%= day.total.toFixed(3) %></span><% } %>
+                        </div>
+                        <% day.items.forEach(function(it) { %>
+                            <%
+                            var itQty = it.qty !== null ? it.qty : 1;
+                            var itPriceLabel = it.price !== null
+                                ? (itQty === 1 ? Number(it.price).toFixed(3) : Number(it.price).toFixed(3) + ' × ' + itQty + ' = ' + (it.price * itQty).toFixed(3))
+                                : '';
+                            %>
+                            <div class="list-row" style="font-size:0.88rem;">
+                                <span>
+                                    <%= it.name %>
+                                    <% if (it.brand) { %>· <%= it.brand %><% if (it.detail) { %> (<%= it.detail %>)<% } %><% } %>
+                                    <% if (it.storeName) { %>· <%= it.storeName %><% } %>
+                                </span>
+                                <span class="meta"><%= itPriceLabel %></span>
+                            </div>
+                        <% }) %>
+                    </div>
+                <% }) %>
+            <% } %>
+        </div>
+    </div>
+
+    <% if (isOwner) { %>
+    <div class="modal-overlay" id="share-modal" onclick="if (event.target === this) toggleShareModal()">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>مشاركة القائمة</h3>
+                <button type="button" class="icon-btn" title="إغلاق" onclick="toggleShareModal()"><i data-lucide="x" class="lucide"></i></button>
+            </div>
+            <form method="POST" action="/lists/<%= list.id %>/share" class="inline-form">
+                <input type="email" name="email" placeholder="إيميل الشخص" required class="flex-1">
+                <button type="submit" class="btn btn-outline">مشاركة</button>
+            </form>
+            <% if (shares.length > 0) { %>
+                <div style="margin-top:10px;">
+                    <% shares.forEach(function(s) { %>
+                        <div class="list-row">
+                            <span><%= s.name %> <span class="meta">(<%= s.email %>)</span></span>
+                            <form method="POST" action="/lists/<%= list.id %>/unshare" style="display:inline;">
+                                <input type="hidden" name="user_id" value="<%= s.id %>">
+                                <button type="submit" class="btn btn-danger btn-sm">إزالة</button>
+                            </form>
+                        </div>
+                    <% }) %>
+                </div>
+            <% } %>
+        </div>
+    </div>
+    <% } %>
+
+    <script>
+        function toggleRename() {
+            var f = document.getElementById('rename-form');
+            if (f) f.style.display = (f.style.display === 'none' || !f.style.display) ? 'flex' : 'none';
+        }
+        function toggleHistoryModal() {
+            var el = document.getElementById('history-modal');
+            if (el) el.classList.toggle('open');
+        }
+        function toggleShareModal() {
+            var el = document.getElementById('share-modal');
+            if (el) el.classList.toggle('open');
+        }
+        function showHistoryDay(idx) {
+            document.querySelectorAll('.history-day').forEach(function(el) {
+                el.style.display = (el.id === 'history-day-' + idx) ? 'block' : 'none';
+            });
+        }
+    </script>
+</body>
+</html>

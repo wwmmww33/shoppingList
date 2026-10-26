@@ -1,0 +1,12 @@
+<% if (availableLists.length > 0) { %>
+<form data-ajax-item-action method="POST" action="/items/<%= item.id %>/move" class="move-panel" id="move-panel-<%= item.id %>">
+    <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+    <select name="target_list_id" required>
+        <% availableLists.forEach(function(l) { %>
+            <option value="<%= l.id %>"><%= l.title %></option>
+        <% }) %>
+    </select>
+    <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="send" class="lucide"></i> نقل</button>
+    <button type="submit" formaction="/items/<%= item.id %>/copy" class="btn btn-outline btn-sm"><i data-lucide="copy" class="lucide"></i> نسخ</button>
+</form>
+<% } %>

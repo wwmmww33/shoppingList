@@ -1,0 +1,32 @@
+<form data-ajax-item-action method="POST" action="/items/<%= item.id %>/edit" class="edit-panel" id="edit-panel-<%= item.id %>">
+    <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+    <input type="text" name="name" value="<%= item.name %>" required class="flex-2">
+    <input type="text" name="quantity" value="<%= item.quantity || '' %>" placeholder="الكمية (اختياري)">
+    <select name="unit">
+        <option value="">بدون وحدة</option>
+        <% (typeof units !== 'undefined' ? units : []).forEach(function(u) { %>
+            <option value="<%= u.key %>" <%= item.unit === u.key ? 'selected' : '' %>><%= u.label %></option>
+        <% }) %>
+    </select>
+    <select name="category">
+        <option value="">بدون تصنيف</option>
+        <% itemCategories.forEach(function(c) { %>
+            <option value="<%= c.key %>" <%= item.category === c.key ? 'selected' : '' %>><%= c.label %></option>
+        <% }) %>
+    </select>
+    <select name="planned_store_id" title="المحل المخطط للشراء منه">
+        <option value="">بدون محل محدد</option>
+        <% (typeof stores !== 'undefined' ? stores : []).forEach(function(s) { %>
+            <option value="<%= s.id %>" <%= item.planned_store_id === s.id ? 'selected' : '' %>><%= s.name %></option>
+        <% }) %>
+    </select>
+    <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; white-space:nowrap;">
+        <input type="checkbox" name="is_weekly" id="edit_is_weekly_<%= item.id %>" <%= item.is_weekly ? 'checked' : '' %> onchange="document.getElementById('edit_weekday_<%= item.id %>').style.display = this.checked ? 'inline-block' : 'none';"> أسبوعي
+    </label>
+    <select name="weekly_weekday" id="edit_weekday_<%= item.id %>" style="<%= item.is_weekly ? '' : 'display:none;' %>">
+        <% weekdayNames.forEach(function(name, idx) { %>
+            <option value="<%= idx %>" <%= item.weekly_weekday === idx ? 'selected' : '' %>><%= name %></option>
+        <% }) %>
+    </select>
+    <button type="submit" class="btn btn-success btn-sm">حفظ التعديل</button>
+</form>

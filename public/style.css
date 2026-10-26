@@ -1,0 +1,576 @@
+:root {
+  --primary: #2980b9;
+  --primary-dark: #22658f;
+  --success: #27ae60;
+  --success-dark: #1f8f50;
+  --danger: #c0392b;
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --input-bg: #ffffff;
+  --border: #e3e7eb;
+  --text: #2c3e50;
+  --text-muted: #8a94a3;
+  --badge-bg: #eaf2f8;
+  --error-bg: #fdecea;
+  --success-bg: #eafaf0;
+  --hover-bg: #f0f3f6;
+}
+
+:root[data-theme="dark"] {
+  --primary: #4aa3df;
+  --primary-dark: #6fb8e8;
+  --success: #2ecc71;
+  --success-dark: #4fd989;
+  --danger: #e8604c;
+  --bg: #15181c;
+  --card: #1f2328;
+  --input-bg: #262b31;
+  --border: #353b42;
+  --text: #e8eaed;
+  --text-muted: #9aa3ad;
+  --badge-bg: #223040;
+  --error-bg: #3a2222;
+  --success-bg: #1d3327;
+  --hover-bg: #262b31;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  direction: rtl;
+}
+
+a { color: var(--primary); text-decoration: none; }
+
+.container { max-width: 640px; margin: 0 auto; padding: 16px; }
+
+nav.topnav {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+nav.topnav .brand { font-weight: bold; color: var(--text); }
+nav.topnav .links { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.92rem; align-items: center; }
+.theme-toggle-btn {
+  background: none; border: 1px solid var(--border); border-radius: 20px;
+  padding: 4px 10px; cursor: pointer; font-size: 0.9rem; color: var(--text);
+}
+
+.auth-wrap {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  gap: 16px;
+}
+.auth-card {
+  background: var(--card);
+  padding: 32px;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+}
+.auth-card h2 { margin-top: 0; }
+
+input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="tel"], select, textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  background: var(--primary);
+  color: #fff;
+}
+.btn:hover { background: var(--primary-dark); }
+.btn.btn-success { background: var(--success); }
+.btn.btn-success:hover { background: var(--success-dark); }
+.btn.btn-danger { background: var(--danger); }
+.btn.btn-outline { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+.btn.btn-outline:hover { background: var(--hover-bg); }
+.btn.btn-sm { padding: 6px 10px; font-size: 0.82rem; }
+.btn.btn-block { width: 100%; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.list-row:last-child { border-bottom: none; }
+.list-row .meta { color: var(--text-muted); font-size: 0.82rem; }
+
+/* Collapsible sections (share box, add-list form, add-item form, etc.) */
+.collapsible-toggle {
+  width: 100%;
+  text-align: right;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.collapsible-toggle .chev { transition: transform 0.15s ease; color: var(--text-muted); }
+.collapsible-toggle.open .chev { transform: rotate(180deg); }
+.collapsible-body { display: none; }
+.collapsible-body.open { display: block; }
+
+/* Compact single-line item rows */
+.item-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  background: var(--card);
+}
+.item-row.bought, .item-row.cancelled { opacity: 0.6; }
+.item-row.cancelled { border-style: dashed; }
+.item-row.hidden-item { background: rgba(251, 140, 0, 0.08); border-color: rgba(251, 140, 0, 0.4); }
+.item-row.item-action-flash {
+  animation: itemActionFlash 0.26s ease forwards;
+  pointer-events: none;
+}
+@keyframes itemActionFlash {
+  0% { transform: scale(1); background: var(--card); border-color: var(--border); }
+  40% { transform: scale(0.98); background: var(--success-bg); border-color: var(--success); }
+  100% { transform: scale(0.94); opacity: 0.35; background: var(--success-bg); border-color: var(--success); }
+}
+
+.item-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.item-row.no-expand .item-line { cursor: default; }
+.item-name { font-weight: 700; font-size: 1.08rem; color: var(--primary-dark); }
+.item-row.bought .item-name, .item-row.cancelled .item-name { text-decoration: line-through; }
+.item-qty { color: var(--text-muted); font-size: 0.82rem; }
+.icon-badge { font-size: 0.85rem; }
+.item-sub { color: var(--text-muted); font-size: 0.75rem; margin-top: 2px; }
+
+.item-icons {
+  display: flex;
+  gap: 2px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+/* Secondary action icons (edit/move/cancel/hide/history/delete) stay hidden
+   until the item row itself is tapped, so an active item shows only the
+   "mark as bought" icon by default — less clutter in a long list. */
+.item-icons-extra { display: none; gap: 2px; }
+.icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 5px 7px;
+  border-radius: 6px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.icon-btn:hover { background: var(--hover-bg); color: var(--text); }
+
+/* Lucide icons: single-color, stroke-based, sized relative to surrounding text */
+.lucide {
+  width: 1.15em;
+  height: 1.15em;
+  vertical-align: -0.22em;
+  stroke-width: 2px;
+}
+.cat-icon.lucide { width: 1em; height: 1em; vertical-align: -0.15em; margin-left: 4px; }
+.btn .lucide { width: 1.05em; height: 1.05em; }
+.theme-toggle-btn .lucide { width: 1.1em; height: 1.1em; vertical-align: -0.2em; }
+.icon-badge.lucide { width: 0.95em; height: 0.95em; vertical-align: -0.1em; color: var(--text-muted); }
+
+/* Optional brand photo: always shown as a small thumbnail, never full-size */
+.brand-thumb {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+}
+.brand-thumb.brand-thumb-sm { width: 24px; height: 24px; border-radius: 4px; }
+.brand-thumb, .lightbox-trigger { cursor: pointer; }
+
+/* Click a brand photo to see it bigger, centered over a dimmed backdrop */
+.image-lightbox-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  cursor: pointer;
+}
+.image-lightbox-overlay.open { display: flex; }
+.image-lightbox-overlay img {
+  max-width: min(90vw, 420px);
+  max-height: 80vh;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+/* "إضافة غرض" modal: centered dialog over a dimmed backdrop, replacing the
+   old inline collapsible box so adding an item doesn't push the whole list
+   down and reads as a clear, modern, focused action. */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 180;
+  /* Anchored near the top, not vertically centered: on mobile, opening the
+     on-screen keyboard (after focusing a field inside) can cover a centered
+     dialog's lower half without resizing the viewport. A top-anchored dialog
+     stays clear of the keyboard regardless of how much space it takes. */
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+}
+.modal-overlay.open { display: flex; }
+.modal-dialog {
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+  width: 100%;
+  max-width: 420px;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 20px;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.modal-header h3 { margin: 0; font-size: 1.1rem; }
+
+/* Floating action button (add item / add store): fixed at a bottom corner
+   instead of an inline block button, so it doesn't take up space in the
+   list/page itself — opens its action in a .modal-overlay. */
+.fab {
+  position: fixed;
+  bottom: 24px;
+  /* Right side, and above the drawers' z-index (101) — the archive drawer
+     (bought/cancelled) slides in from the left and would otherwise sit right
+     on top of this button, making it unreachable while that drawer is open. */
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--success);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 110;
+}
+.fab:hover { background: var(--success-dark); }
+.fab .lucide { width: 1.6em; height: 1.6em; stroke-width: 2.3px; }
+/* Second FAB (open the bought/cancelled drawer), in a different color so the
+   two are easy to tell apart. */
+.fab-secondary { background: var(--primary); }
+.fab-secondary:hover { background: var(--primary-dark); }
+
+/* Multiple FABs (list page: archive + add item) can cover the last item(s)
+   on a short screen, so they're grouped behind a small handle tab that
+   slides them fully off-screen on demand instead of removing them outright. */
+.fab-group {
+  position: fixed;
+  bottom: 24px;
+  right: 20px;
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+.fab-group.hidden { transform: translateX(110px); opacity: 0; pointer-events: none; }
+/* Grouped fabs are laid out by the group's own flex column, not individually
+   fixed/stacked like a lone .fab (e.g. on the stores page). */
+.fab-group .fab {
+  position: static;
+  bottom: auto;
+  right: auto;
+}
+.fab-handle {
+  position: fixed;
+  bottom: 24px;
+  right: 0;
+  width: 24px;
+  height: 56px;
+  border-radius: 10px 0 0 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-right: none;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 111;
+  box-shadow: -2px 0 8px rgba(0,0,0,0.12);
+}
+.fab-handle .lucide { width: 1.2em; height: 1.2em; transition: transform 0.25s ease; }
+.fab-handle.collapsed .lucide { transform: rotate(180deg); }
+.fab-badge {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+/* "تم شراء X — تراجع" toast, shown for a few seconds after marking an item
+   bought so a mis-tap can be undone without hunting for the item again. */
+.undo-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translate(-50%, 100px);
+  opacity: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--text);
+  color: var(--bg);
+  padding: 10px 14px;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  z-index: 150;
+  max-width: calc(100vw - 32px);
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.undo-toast.open { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.undo-toast #undo-buy-btn { background: transparent; color: var(--bg); border-color: var(--bg); white-space: nowrap; }
+.undo-toast #undo-buy-btn:hover { background: rgba(255,255,255,0.15); }
+#undo-buy-text { font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.category-header {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 14px 0 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+/* Category group header inside "bought"/"cancelled": clicking it folds or
+   unfolds just that group's items (collapsed by default), same mechanism and
+   open-state preservation as the outer section toggle. */
+.category-header-toggle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.category-header-toggle .chev { transition: transform 0.15s ease; }
+.category-header-toggle.open .chev { transform: rotate(180deg); }
+
+.badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: var(--badge-bg);
+  color: var(--primary);
+}
+
+.buy-panel, .edit-panel, .move-panel {
+  display: none;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.buy-panel.open, .edit-panel.open, .move-panel.open { display: flex; }
+.buy-panel > *, .edit-panel > *, .move-panel > * { flex: 1 1 140px; }
+
+.section-title { font-size: 0.95rem; color: var(--text-muted); margin: 18px 0 8px; }
+
+.error-box { color: var(--danger); background: var(--error-bg); padding: 10px; border-radius: 8px; margin-bottom: 14px; font-size: 0.9rem; }
+.success-box { color: var(--success); background: var(--success-bg); padding: 10px; border-radius: 8px; margin-bottom: 14px; font-size: 0.9rem; }
+
+table.history-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+table.history-table th, table.history-table td { padding: 8px; text-align: center; border-bottom: 1px solid var(--border); }
+table.history-table tr.best td { background: var(--success-bg); font-weight: bold; }
+
+.inline-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* Relative widths within an inline-form/panel row (e.g. a name field wider
+   than its category select) — kept as classes rather than inline styles so
+   the mobile media query below can still override them to stack full-width. */
+.flex-1 { flex: 1; }
+.flex-2 { flex: 2; }
+
+/* A sub-row inside an inline-form that should stay side-by-side even when
+   the mobile media query stacks the form's other (direct) children full-width
+   — e.g. item name + quantity on one line, with unit/category below. */
+.form-row { display: flex; gap: 8px; width: 100%; }
+.form-row > * { min-width: 0; }
+
+/* Custom item-name autocomplete dropdown (replaces native <datalist>, which
+   has unreliable/no mobile support and can interfere with on-screen keyboard
+   language switching). */
+.autocomplete-wrap { position: relative; display: flex; flex-direction: column; }
+.autocomplete-list {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 60;
+  margin-top: 2px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.autocomplete-item { padding: 8px 12px; cursor: pointer; font-size: 0.9rem; }
+.autocomplete-item:hover { background: var(--hover-bg); }
+
+#store-map { height: 260px; border-radius: 10px; margin-bottom: 10px; border: 1px solid var(--border); }
+
+/* Side drawer for "my lists / shared with me / create list" on the dashboard */
+.drawer-trigger-btn {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  width: 100%;
+  background: var(--card);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  text-align: right;
+}
+.drawer-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 100;
+}
+.drawer-overlay.open { display: block; }
+.lists-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 300px;
+  max-width: 85vw;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -4px 0 16px rgba(0,0,0,0.15);
+  transform: translateX(100%);
+  transition: transform 0.22s ease;
+  z-index: 101;
+  overflow-y: auto;
+  padding: 16px;
+}
+.lists-drawer.open { transform: translateX(0); }
+/* Archive drawer (bought/cancelled items) slides from the opposite side of
+   the main nav drawer, so the two are visually distinct and never overlap
+   the same edge. */
+.archive-drawer {
+  right: auto;
+  left: 0;
+  border-left: none;
+  border-right: 1px solid var(--border);
+  box-shadow: 4px 0 16px rgba(0,0,0,0.15);
+  transform: translateX(-100%);
+}
+.archive-drawer.open { transform: translateX(0); }
+
+@media (max-width: 480px) {
+  .container { padding: 12px; }
+  .card { padding: 12px; }
+
+  /* Buy/edit/move panels and every inline-form (add item, add store, share,
+     rename...) pack fields two-per-row via flex: 1 1 140px, which is fine on
+     desktop but crams and truncates labels on a phone — stack them full-width
+     instead. Note: a `br` or spacer isn't needed since flex-wrap already
+     breaks each 100%-basis child onto its own line. */
+  .inline-form > *,
+  .buy-panel > *,
+  .edit-panel > *,
+  .move-panel > * {
+    flex: 1 1 100%;
+  }
+}

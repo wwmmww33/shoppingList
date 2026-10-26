@@ -1,0 +1,65 @@
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<script>
+    (function () {
+        try {
+            if (localStorage.getItem('theme') === 'dark') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        } catch (e) {}
+    })();
+    function toggleTheme() {
+        try {
+            var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            if (isDark) {
+                document.documentElement.removeAttribute('data-theme');
+                localStorage.setItem('theme', 'light');
+            } else {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                localStorage.setItem('theme', 'dark');
+            }
+        } catch (e) {}
+    }
+    function toggleCollapsible(id) {
+        var body = document.getElementById(id);
+        if (!body) return;
+        body.classList.toggle('open');
+        var btn = document.querySelector('[onclick*="\'' + id + '\'"]');
+        if (btn) btn.classList.toggle('open');
+    }
+    function toggleListsDrawer() {
+        var drawer = document.getElementById('lists-drawer');
+        var overlay = document.getElementById('drawer-overlay');
+        if (drawer) drawer.classList.toggle('open');
+        if (overlay) overlay.classList.toggle('open');
+    }
+    function renderIcons() {
+        if (window.lucide) lucide.createIcons();
+    }
+    document.addEventListener('DOMContentLoaded', renderIcons);
+
+    // theme-init.ejs is included in <head>, so the overlay markup can't be
+    // written out here directly (a <div> there would be invalid HTML) — it's
+    // built and appended to <body> once the DOM is ready instead.
+    function ensureImageLightbox() {
+        if (document.getElementById('image-lightbox-overlay')) return;
+        var overlay = document.createElement('div');
+        overlay.className = 'image-lightbox-overlay';
+        overlay.id = 'image-lightbox-overlay';
+        overlay.onclick = closeImageLightbox;
+        var img = document.createElement('img');
+        img.id = 'image-lightbox-img';
+        overlay.appendChild(img);
+        document.body.appendChild(overlay);
+    }
+    function openImageLightbox(src) {
+        if (!src) return;
+        ensureImageLightbox();
+        document.getElementById('image-lightbox-img').src = src;
+        document.getElementById('image-lightbox-overlay').classList.add('open');
+    }
+    function closeImageLightbox() {
+        var overlay = document.getElementById('image-lightbox-overlay');
+        if (overlay) overlay.classList.remove('open');
+    }
+    document.addEventListener('DOMContentLoaded', ensureImageLightbox);
+</script>

@@ -1,0 +1,24 @@
+{
+  "name": "dukan-list",
+  "version": "1.0.0",
+  "private": true,
+  "description": "قوائم مشتريات مشتركة بين أفراد البيت",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^18.0.8",
+    "ejs": "^3.1.10",
+    "express": "^4.21.1",
+    "express-session": "^1.18.1",
+    "jimp": "^1.6.1",
+    "multer": "^2.4.0",
+    "session-file-store": "^1.5.0",
+    "sqlite3": "^5.1.7"
+  }
+}

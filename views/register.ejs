@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>إنشاء حساب - قوائمنا</title>
+    <link rel="stylesheet" href="/style.css">
+    <%- include('partials/theme-init') %>
+</head>
+<body>
+    <div class="auth-wrap">
+        <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="تبديل الوضع الليلي" style="align-self:center;"><i data-lucide="moon" class="lucide"></i></button>
+        <div class="auth-card">
+            <h2><i data-lucide="clipboard-list" class="lucide"></i> حساب جديد</h2>
+            <% if (error) { %>
+                <div class="error-box"><%= error %></div>
+            <% } %>
+            <form method="POST" action="/register">
+                <div style="margin-bottom: 12px;">
+                    <input type="text" name="name" placeholder="الاسم" required autofocus>
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <input type="email" name="email" placeholder="الإيميل" required>
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <input type="password" name="password" placeholder="كلمة المرور (6 أحرف على الأقل)" required minlength="6">
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <input type="password" name="confirm_password" placeholder="تأكيد كلمة المرور" required minlength="6">
+                </div>
+                <button type="submit" class="btn btn-success btn-block">إنشاء الحساب</button>
+            </form>
+            <p style="margin-top: 16px; font-size: 0.9rem;">
+                عندك حساب؟ <a href="/login">تسجيل الدخول</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>
