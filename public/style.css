@@ -85,7 +85,7 @@ nav.topnav .links { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.92re
 }
 .auth-card h2 { margin-top: 0; }
 
-input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="tel"], select, textarea {
+input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="tel"], input[type="date"], input[type="time"], select, textarea {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -574,3 +574,10 @@ table.history-table tr.best td { background: var(--success-bg); font-weight: bol
     flex: 1 1 100%;
   }
 }
+
+/* Labeled field inside a modal form (e.g. purchase-history edit): caption
+   above the control so filled-in values stay identifiable once the
+   placeholder is gone. */
+.inline-form .field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 100%; font-size: 0.82rem; color: var(--text-muted); }
+.inline-form .form-row .field { flex: 1 1 0; }
+.inline-form .field > input, .inline-form .field > select { width: 100%; box-sizing: border-box; }

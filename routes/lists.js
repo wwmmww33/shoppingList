@@ -352,7 +352,7 @@ const loadAvailableListsFor = (userId, excludeListId) =>
 // list page, separate from any single item's own "سجل الشراء" page.
 const loadShoppingHistoryByDate = async (listId) => {
   const rows = await all(
-    `SELECT substr(ip.bought_at, 1, 10) AS date, li.name AS item_name, ip.brand, ip.brand_detail,
+    `SELECT substr(ip.bought_at, 1, 10) AS date, ip.id, ip.store_id, ip.brand_image, li.name AS item_name, ip.brand, ip.brand_detail,
             ip.price, ip.purchased_qty, s.name AS store_name, ip.bought_at
      FROM item_purchases ip
      JOIN list_items li ON li.id = ip.item_id
@@ -369,6 +369,9 @@ const loadShoppingHistoryByDate = async (listId) => {
       byDate.push({ date: r.date, items: [] });
     }
     byDate[indexByDate[r.date]].items.push({
+      purchaseId: r.id,
+      storeId: r.store_id,
+      image: r.brand_image,
       name: r.item_name,
       brand: r.brand,
       detail: r.brand_detail,
@@ -414,6 +417,18 @@ const loadKnownItemNames = async (userId) => {
   return rows.map((r) => ({ name: r.name, category: r.category || '' }));
 };
 
+// People a list is shared with (shown in the owner's share modal).
+const loadListShares = (listId) =>
+  all(
+    `SELECT u.id, u.name, u.email FROM list_shares s JOIN users u ON u.id = s.user_id WHERE s.list_id = ? ORDER BY u.name`,
+    [listId]
+  );
+
+// Only same-site relative paths are honored as a post-action return target
+// (blocks "//evil.com"-style open redirects); anything else gets `fallback`.
+const localRedirectTarget = (target, fallback) =>
+  typeof target === 'string' && /^\/(?![\/\\])/.test(target) ? target : fallback;
+
 router.get('/', async (req, res) => {
   const itemCategories = await loadItemCategories();
   const ownedLists = await all('SELECT * FROM lists WHERE owner_id = ? ORDER BY created_at DESC', [req.user.id]);
@@ -431,6 +446,8 @@ router.get('/', async (req, res) => {
   let pinnedItems = null;
   let pinnedIsOwner = false;
   let pinnedIsShared = false;
+  let pinnedShares = [];
+  let pinnedHistory = [];
   if (req.user.default_list_id) {
     pinnedList = await get('SELECT * FROM lists WHERE id = ?', [req.user.default_list_id]);
     if (pinnedList) {
@@ -445,9 +462,9 @@ router.get('/', async (req, res) => {
       pinnedItems = await loadItemsForList(pinnedList.id, { isOwner: pinnedIsOwner, cancelledSort: req.query.sort, categories: itemCategories, hiddenFilter: ['hide','only'].includes(req.query.hidden) ? req.query.hidden : 'all', storeFilter: req.query.store ? Number(req.query.store) : null, userId: req.user.id });
       // A list a person only sees through being shared with them is inherently
       // "shared"; for the owner, it's shared only if someone else was added.
-      pinnedIsShared = pinnedIsOwner
-        ? !!(await get('SELECT 1 FROM list_shares WHERE list_id = ?', [pinnedList.id]))
-        : true;
+      pinnedShares = pinnedIsOwner ? await loadListShares(pinnedList.id) : [];
+      pinnedIsShared = pinnedIsOwner ? pinnedShares.length > 0 : true;
+      pinnedHistory = await loadShoppingHistoryByDate(pinnedList.id);
     }
   }
 
@@ -462,6 +479,8 @@ router.get('/', async (req, res) => {
     pinnedItems,
     pinnedIsOwner,
     pinnedIsShared,
+    pinnedShares,
+    pinnedHistory,
     stores,
     availableLists,
     knownItemNames,
@@ -497,12 +516,7 @@ router.get('/lists/:id', requireListAccess, async (req, res) => {
   await syncDueWeeklyItems(req.list.id);
   const itemCategories = await loadItemCategories();
   const { active, archived } = await loadItemsForList(req.list.id, { isOwner: req.isListOwner, cancelledSort: req.query.sort, categories: itemCategories, hiddenFilter: ['hide','only'].includes(req.query.hidden) ? req.query.hidden : 'all', storeFilter: req.query.store ? Number(req.query.store) : null, userId: req.user.id });
-  const shares = req.isListOwner
-    ? await all(
-        `SELECT u.id, u.name, u.email FROM list_shares s JOIN users u ON u.id = s.user_id WHERE s.list_id = ? ORDER BY u.name`,
-        [req.list.id]
-      )
-    : [];
+  const shares = req.isListOwner ? await loadListShares(req.list.id) : [];
   const stores = await all('SELECT * FROM stores ORDER BY name ASC');
   const availableLists = await loadAvailableListsFor(req.user.id, req.list.id);
   const knownItemNames = await loadKnownItemNames(req.user.id);
@@ -562,13 +576,13 @@ router.post('/lists/:id/share', requireListAccess, async (req, res) => {
   if (target && target.id !== req.list.owner_id) {
     await run('INSERT OR IGNORE INTO list_shares (list_id, user_id) VALUES (?, ?)', [req.list.id, target.id]);
   }
-  res.redirect(`/lists/${req.list.id}`);
+  res.redirect(localRedirectTarget(req.body.redirect_to, `/lists/${req.list.id}`));
 });
 
 router.post('/lists/:id/unshare', requireListAccess, async (req, res) => {
   if (!req.isListOwner) return res.status(403).send('غير مصرح');
   await run('DELETE FROM list_shares WHERE list_id = ? AND user_id = ?', [req.list.id, Number(req.body.user_id)]);
-  res.redirect(`/lists/${req.list.id}`);
+  res.redirect(localRedirectTarget(req.body.redirect_to, `/lists/${req.list.id}`));
 });
 
 // --- Items ---
@@ -946,21 +960,35 @@ router.get('/items/:itemId/history', async (req, res) => {
   res.render('item-history', { item: ctx.item, list: ctx.list, purchases, stores });
 });
 
-// A purchase record entered with a mistake (wrong price, store, brand name,
-// detail) can be corrected after the fact — previously the only option was
-// "undo", which only ever targets the single most recent purchase.
-router.post('/purchases/:purchaseId/edit', async (req, res) => {
+// Looks up a purchase plus its item, only if the current user owns or is
+// shared on that item's list (same rule as getItemWithAccess).
+const getPurchaseWithAccess = async (req) => {
   const purchase = await get('SELECT * FROM item_purchases WHERE id = ?', [Number(req.params.purchaseId)]);
-  if (!purchase) return res.status(404).send('غير موجود');
+  if (!purchase) return null;
   const item = await get('SELECT * FROM list_items WHERE id = ?', [purchase.item_id]);
-  if (!item) return res.status(404).send('غير موجود');
+  if (!item) return null;
   const list = await get('SELECT * FROM lists WHERE id = ?', [item.list_id]);
-  if (!list) return res.status(404).send('غير موجود');
-  const isOwner = list.owner_id === req.user.id;
-  if (!isOwner) {
+  if (!list) return null;
+  if (list.owner_id !== req.user.id) {
     const share = await get('SELECT 1 FROM list_shares WHERE list_id = ? AND user_id = ?', [list.id, req.user.id]);
-    if (!share) return res.status(404).send('غير موجود');
+    if (!share) return null;
   }
+  return { purchase, item };
+};
+
+// Purchases can be edited from an item's history page or a list's history
+// modal (list page or home page); falls back to the item's history page.
+const purchaseRedirect = (req, res, item) => {
+  res.redirect(localRedirectTarget(req.body.redirect_to, `/items/${item.id}/history`));
+};
+
+// A purchase record entered with a mistake (wrong price, store, brand name,
+// detail, date, photo) can be corrected after the fact — previously the only
+// option was "undo", which only ever targets the single most recent purchase.
+router.post('/purchases/:purchaseId/edit', uploadBrandImage, async (req, res) => {
+  const ctx = await getPurchaseWithAccess(req);
+  if (!ctx) return res.status(404).send('غير موجود');
+  const { purchase, item } = ctx;
 
   const storeId = req.body.store_id ? Number(req.body.store_id) : null;
   const brand = (req.body.brand || '').trim() || null;
@@ -970,11 +998,33 @@ router.post('/purchases/:purchaseId/edit', async (req, res) => {
   const qtyRaw = (req.body.purchased_qty || '').trim();
   const purchasedQty = qtyRaw !== '' && Number.isFinite(Number(qtyRaw)) && Number(qtyRaw) > 0 ? Number(qtyRaw) : null;
 
+  // Date/time are optional overrides: anything missing or malformed keeps
+  // the corresponding part of the original timestamp.
+  const original = String(purchase.bought_at || nowOmanString());
+  const dateRaw = (req.body.bought_date || '').trim();
+  const timeRaw = (req.body.bought_time || '').trim();
+  const datePart = /^\d{4}-\d{2}-\d{2}$/.test(dateRaw) ? dateRaw : original.slice(0, 10);
+  const timePart = /^\d{2}:\d{2}$/.test(timeRaw) ? `${timeRaw}:00` : original.slice(11, 19) || '00:00:00';
+  const boughtAt = `${datePart} ${timePart}`;
+
+  // A new photo replaces the old one; otherwise it's kept unless explicitly
+  // removed. Old files aren't deleted since other purchases may share them.
+  let brandImage = await saveBrandImage(req.file);
+  if (!brandImage) brandImage = req.body.remove_brand_image ? null : purchase.brand_image;
+
   await run(
-    'UPDATE item_purchases SET store_id = ?, brand = ?, brand_detail = ?, price = ?, purchased_qty = ? WHERE id = ?',
-    [storeId, brand, brandDetail, price, purchasedQty, purchase.id]
+    'UPDATE item_purchases SET store_id = ?, brand = ?, brand_detail = ?, brand_image = ?, price = ?, purchased_qty = ?, bought_at = ? WHERE id = ?',
+    [storeId, brand, brandDetail, brandImage, price, purchasedQty, boughtAt, purchase.id]
   );
-  res.redirect(`/items/${item.id}/history`);
+  purchaseRedirect(req, res, item);
+});
+
+// Removes a single (e.g. duplicate or mistaken) purchase record from history.
+router.post('/purchases/:purchaseId/delete', async (req, res) => {
+  const ctx = await getPurchaseWithAccess(req);
+  if (!ctx) return res.status(404).send('غير موجود');
+  await run('DELETE FROM item_purchases WHERE id = ?', [ctx.purchase.id]);
+  purchaseRedirect(req, res, ctx.item);
 });
 
 module.exports = router;

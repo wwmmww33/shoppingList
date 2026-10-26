@@ -1,4 +1,7 @@
-<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<%# Icons are served locally at a pinned version: loading lucide@latest from a
+    CDN meant a slow/blocked CDN (or a breaking release) silently dropped every
+    icon, leaving icon-only buttons (history, share, ...) invisible. %>
+<script src="/vendor/lucide-1.61.0.min.js"></script>
 <script>
     (function () {
         try {

@@ -1,0 +1,15 @@
+<%#
+  History + share icon buttons for a list's header card, shown both on the
+  list page and for the pinned list on the home page. Pairs with
+  partials/list-modals (which defines the modals these open). Expects
+  `isOwner` and `shares`.
+%>
+<button type="button" class="icon-btn" title="سجل الشراء السابق" onclick="toggleHistoryModal()">
+    <i data-lucide="receipt" class="lucide"></i>
+</button>
+<% if (isOwner) { %>
+    <button type="button" class="icon-btn" title="مشاركة القائمة" onclick="toggleShareModal()">
+        <i data-lucide="users" class="lucide"></i>
+        <% if (shares.length > 0) { %><span class="badge" style="margin-inline-start:2px;"><%= shares.length %></span><% } %>
+    </button>
+<% } %>

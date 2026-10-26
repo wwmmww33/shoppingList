@@ -1,0 +1,108 @@
+<%#
+  Shared "edit a past purchase" modal, used by both an item's own history
+  page and the list page's "سجل الشراء السابق" modal. Expects `stores` and
+  `redirectTo` (where to land after saving/deleting); opened via
+  openEditPurchaseModal({ id, storeId, brand, detail, price, qty, date, time, image }).
+%>
+<div class="modal-overlay" id="edit-purchase-overlay" onclick="if (event.target === this) toggleEditPurchaseModal()">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3>تعديل بيانات الشراء</h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="toggleEditPurchaseModal()"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+        <form method="POST" id="edit-purchase-form" class="inline-form" enctype="multipart/form-data">
+            <input type="hidden" name="redirect_to" value="<%= redirectTo %>">
+            <label class="field">المحل
+                <select name="store_id" id="edit-purchase-store">
+                    <option value="">بدون تحديد محل</option>
+                    <% stores.forEach(function(s) { %>
+                        <option value="<%= s.id %>"><%= s.name %></option>
+                    <% }) %>
+                </select>
+            </label>
+            <label class="field">البراند
+                <input type="text" name="brand" id="edit-purchase-brand" placeholder="اسم البراند">
+            </label>
+            <label class="field">التفاصيل
+                <input type="text" name="brand_detail" id="edit-purchase-detail" placeholder="الحجم/النوع، مثال: كرتون">
+            </label>
+            <div class="form-row">
+                <label class="field">سعر الوحدة
+                    <input type="number" step="0.001" min="0" inputmode="decimal" name="price" id="edit-purchase-price" placeholder="اختياري">
+                </label>
+                <label class="field">الكمية
+                    <input type="number" step="1" min="1" inputmode="numeric" name="purchased_qty" id="edit-purchase-qty" placeholder="1">
+                </label>
+            </div>
+            <div class="form-row">
+                <label class="field">التاريخ
+                    <input type="date" name="bought_date" id="edit-purchase-date">
+                </label>
+                <label class="field">الوقت
+                    <input type="time" name="bought_time" id="edit-purchase-time">
+                </label>
+            </div>
+            <div class="field">صورة البراند
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <img id="edit-purchase-image" class="brand-thumb" style="display:none;" alt="صورة البراند" onclick="openImageLightbox(this.src)">
+                    <label class="btn btn-outline btn-sm" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+                        <i data-lucide="camera" class="lucide"></i> التقاط
+                        <input type="file" name="brand_image" class="edit-purchase-file" accept="image/*" capture="environment" style="display:none;" onchange="previewEditPurchaseImage(this)">
+                    </label>
+                    <label class="btn btn-outline btn-sm" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+                        <i data-lucide="image" class="lucide"></i> من المعرض
+                        <input type="file" name="brand_image" class="edit-purchase-file" accept="image/*" style="display:none;" onchange="previewEditPurchaseImage(this)">
+                    </label>
+                    <label id="edit-purchase-remove-wrap" style="display:none; font-size:0.85rem; align-items:center; gap:4px;">
+                        <input type="checkbox" name="remove_brand_image" value="1" id="edit-purchase-remove" onchange="document.getElementById('edit-purchase-image').style.opacity = this.checked ? '0.3' : '1'"> حذف الصورة
+                    </label>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-success btn-sm">حفظ</button>
+        </form>
+        <form method="POST" id="delete-purchase-form" style="margin-top:12px;" onsubmit="return confirm('حذف عملية الشراء هذه من السجل نهائيًا؟');">
+            <input type="hidden" name="redirect_to" value="<%= redirectTo %>">
+            <button type="submit" class="btn btn-danger btn-sm"><i data-lucide="trash-2" class="lucide"></i> حذف من السجل</button>
+        </form>
+    </div>
+</div>
+
+<script>
+    function toggleEditPurchaseModal() {
+        var el = document.getElementById('edit-purchase-overlay');
+        if (el) el.classList.toggle('open');
+    }
+    function openEditPurchaseModal(p) {
+        document.getElementById('edit-purchase-form').action = '/purchases/' + p.id + '/edit';
+        document.getElementById('delete-purchase-form').action = '/purchases/' + p.id + '/delete';
+        document.getElementById('edit-purchase-store').value = p.storeId || '';
+        document.getElementById('edit-purchase-brand').value = p.brand || '';
+        document.getElementById('edit-purchase-detail').value = p.detail || '';
+        document.getElementById('edit-purchase-price').value = p.price;
+        document.getElementById('edit-purchase-qty').value = p.qty;
+        document.getElementById('edit-purchase-date').value = p.date || '';
+        document.getElementById('edit-purchase-time').value = p.time || '';
+        document.querySelectorAll('.edit-purchase-file').forEach(function(inp) { inp.value = ''; });
+        var img = document.getElementById('edit-purchase-image');
+        img.style.opacity = '1';
+        img.style.display = p.image ? '' : 'none';
+        if (p.image) img.src = p.image; else img.removeAttribute('src');
+        document.getElementById('edit-purchase-remove').checked = false;
+        document.getElementById('edit-purchase-remove-wrap').style.display = p.image ? 'inline-flex' : 'none';
+        document.getElementById('edit-purchase-overlay').classList.add('open');
+    }
+    // Camera and gallery inputs share name="brand_image": clear the other
+    // one so only the latest pick is submitted, and preview it locally.
+    function previewEditPurchaseImage(input) {
+        document.querySelectorAll('.edit-purchase-file').forEach(function(other) {
+            if (other !== input) other.value = '';
+        });
+        if (!input.files || !input.files[0]) return;
+        var img = document.getElementById('edit-purchase-image');
+        img.src = URL.createObjectURL(input.files[0]);
+        img.style.display = '';
+        img.style.opacity = '1';
+        document.getElementById('edit-purchase-remove').checked = false;
+        document.getElementById('edit-purchase-remove-wrap').style.display = 'none';
+    }
+</script>

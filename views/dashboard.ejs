@@ -14,10 +14,13 @@
         <% if (pinnedList) { %>
             <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                 <h2 style="margin:0;"><i data-lucide="pin" class="lucide"></i> <a href="/lists/<%= pinnedList.id %>"><%= pinnedList.title %></a></h2>
-                <form method="POST" action="/lists/unpin">
-                    <input type="hidden" name="from" value="home">
-                    <button type="submit" class="btn btn-outline btn-sm">إلغاء التثبيت</button>
-                </form>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                    <%- include('partials/list-header-buttons', { isOwner: pinnedIsOwner, shares: pinnedShares }) %>
+                    <form method="POST" action="/lists/unpin">
+                        <input type="hidden" name="from" value="home">
+                        <button type="submit" class="btn btn-outline btn-sm">إلغاء التثبيت</button>
+                    </form>
+                </div>
             </div>
             <div id="items-list-root">
             <%- include('partials/items-list', {
@@ -37,6 +40,7 @@
                 cancelledSort: cancelledSort
             }) %>
             </div>
+            <%- include('partials/list-modals', { list: pinnedList, isOwner: pinnedIsOwner, shares: pinnedShares, shoppingHistory: pinnedHistory, stores: stores, returnTo: '/' }) %>
         <% } else { %>
             <div class="card" style="text-align:center; color: var(--text-muted);">
                 <p>مفيش قائمة مثبتة دلوقتي.</p>

@@ -58,7 +58,7 @@
                                 <td><%= p.buyer_name || 'مستخدم سابق' %></td>
                                 <td>
                                     <button type="button" class="icon-btn" title="تعديل"
-                                        onclick="openEditPurchaseModal(<%= p.id %>, <%= JSON.stringify(p.store_id || '') %>, <%= JSON.stringify(p.brand || '') %>, <%= JSON.stringify(p.brand_detail || '') %>, <%= JSON.stringify(p.price !== null ? p.price : '') %>, <%= JSON.stringify(p.purchased_qty !== null ? p.purchased_qty : '') %>)">
+                                        onclick="openEditPurchaseModal(<%= JSON.stringify({ id: p.id, storeId: p.store_id || '', brand: p.brand || '', detail: p.brand_detail || '', price: p.price !== null ? p.price : '', qty: p.purchased_qty !== null ? p.purchased_qty : '', date: String(p.bought_at || '').slice(0, 10), time: String(p.bought_at || '').slice(11, 16), image: p.brand_image || '' }) %>)">
                                         <i data-lucide="pencil" class="lucide"></i>
                                     </button>
                                 </td>
@@ -73,42 +73,6 @@
         </div>
     </div>
 
-    <div class="modal-overlay" id="edit-purchase-overlay" onclick="if (event.target === this) toggleEditPurchaseModal()">
-        <div class="modal-dialog">
-            <div class="modal-header">
-                <h3>تعديل بيانات الشراء</h3>
-                <button type="button" class="icon-btn" title="إغلاق" onclick="toggleEditPurchaseModal()"><i data-lucide="x" class="lucide"></i></button>
-            </div>
-            <form method="POST" id="edit-purchase-form" class="inline-form">
-                <select name="store_id" id="edit-purchase-store">
-                    <option value="">بدون تحديد محل</option>
-                    <% stores.forEach(function(s) { %>
-                        <option value="<%= s.id %>"><%= s.name %></option>
-                    <% }) %>
-                </select>
-                <input type="text" name="brand" id="edit-purchase-brand" placeholder="اسم البراند">
-                <input type="text" name="brand_detail" id="edit-purchase-detail" placeholder="تفاصيل البراند">
-                <input type="number" step="0.001" min="0" inputmode="decimal" name="price" id="edit-purchase-price" placeholder="سعر الوحدة">
-                <input type="number" step="1" min="1" inputmode="numeric" name="purchased_qty" id="edit-purchase-qty" placeholder="عدد الوحدات (افتراضيًا 1)">
-                <button type="submit" class="btn btn-success btn-sm">حفظ</button>
-            </form>
-        </div>
-    </div>
-
-    <script>
-        function toggleEditPurchaseModal() {
-            var el = document.getElementById('edit-purchase-overlay');
-            if (el) el.classList.toggle('open');
-        }
-        function openEditPurchaseModal(purchaseId, storeId, brand, brandDetail, price, qty) {
-            document.getElementById('edit-purchase-form').action = '/purchases/' + purchaseId + '/edit';
-            document.getElementById('edit-purchase-store').value = storeId || '';
-            document.getElementById('edit-purchase-brand').value = brand || '';
-            document.getElementById('edit-purchase-detail').value = brandDetail || '';
-            document.getElementById('edit-purchase-price').value = price !== '' ? price : '';
-            document.getElementById('edit-purchase-qty').value = qty !== '' ? qty : '';
-            document.getElementById('edit-purchase-overlay').classList.add('open');
-        }
-    </script>
+    <%- include('partials/purchase-edit-modal', { stores: stores, redirectTo: '/items/' + item.id + '/history' }) %>
 </body>
 </html>

@@ -1,0 +1,111 @@
+<%#
+  A list's "سجل الشراء السابق" (shopping history) and share modals, plus the
+  purchase-edit modal opened from the history — shared by the list page and
+  the pinned list on the home page. Expects `list`, `isOwner`, `shares`,
+  `shoppingHistory`, `stores` and `returnTo` (the page to come back to after
+  editing a purchase or changing shares).
+%>
+<!-- Shopping history: one round (calendar day) at a time, most recent
+     first by default, switchable via the dropdown — rather than a long
+     scrolling page of every day ever shopped. -->
+<div class="modal-overlay" id="history-modal" onclick="if (event.target === this) toggleHistoryModal()">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3>سجل الشراء السابق</h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="toggleHistoryModal()"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+        <% if (shoppingHistory.length === 0) { %>
+            <p style="color: var(--text-muted);">لا يوجد سجل شراء بعد لهذه القائمة.</p>
+        <% } else { %>
+            <select id="history-day-select" onchange="showHistoryDay(this.value)" style="margin-bottom:12px;">
+                <% shoppingHistory.forEach(function(day, idx) { %>
+                    <option value="<%= idx %>"><%= day.dateLabel %> (<%= day.items.length %> غرض)</option>
+                <% }) %>
+            </select>
+            <% shoppingHistory.forEach(function(day, idx) { %>
+                <div class="history-day" id="history-day-<%= idx %>" style="<%= idx === 0 ? '' : 'display:none;' %>">
+                    <div style="font-weight:600; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+                        <span><%= day.dateLabel %></span>
+                        <% if (day.total > 0) { %><span class="badge">الإجمالي: <%= day.total.toFixed(3) %></span><% } %>
+                    </div>
+                    <% day.items.forEach(function(it) { %>
+                        <%
+                        var itQty = it.qty !== null ? it.qty : 1;
+                        var itPriceLabel = it.price !== null
+                            ? (itQty === 1 ? Number(it.price).toFixed(3) : Number(it.price).toFixed(3) + ' × ' + itQty + ' = ' + (it.price * itQty).toFixed(3))
+                            : '';
+                        %>
+                        <div class="list-row" style="font-size:0.88rem;">
+                            <span>
+                                <%= it.name %>
+                                <% if (it.brand) { %>· <%= it.brand %><% if (it.detail) { %> (<%= it.detail %>)<% } %><% } %>
+                                <% if (it.storeName) { %>· <%= it.storeName %><% } %>
+                            </span>
+                            <span style="display:flex; align-items:center; gap:4px;">
+                                <span class="meta"><%= itPriceLabel %></span>
+                                <button type="button" class="icon-btn" title="تعديل"
+                                    onclick="openEditPurchaseModal(<%= JSON.stringify({ id: it.purchaseId, storeId: it.storeId || '', brand: it.brand || '', detail: it.detail || '', price: it.price !== null ? it.price : '', qty: it.qty !== null ? it.qty : '', date: String(it.boughtAt || '').slice(0, 10), time: String(it.boughtAt || '').slice(11, 16), image: it.image || '' }) %>)">
+                                    <i data-lucide="pencil" class="lucide"></i>
+                                </button>
+                            </span>
+                        </div>
+                    <% }) %>
+                </div>
+            <% }) %>
+        <% } %>
+    </div>
+</div>
+
+<%- include('purchase-edit-modal', { stores: stores, redirectTo: returnTo + '#history' }) %>
+
+<% if (isOwner) { %>
+<div class="modal-overlay" id="share-modal" onclick="if (event.target === this) toggleShareModal()">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3>مشاركة القائمة</h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="toggleShareModal()"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+        <form method="POST" action="/lists/<%= list.id %>/share" class="inline-form">
+            <input type="hidden" name="redirect_to" value="<%= returnTo %>">
+            <input type="email" name="email" placeholder="إيميل الشخص" required class="flex-1">
+            <button type="submit" class="btn btn-outline">مشاركة</button>
+        </form>
+        <% if (shares.length > 0) { %>
+            <div style="margin-top:10px;">
+                <% shares.forEach(function(s) { %>
+                    <div class="list-row">
+                        <span><%= s.name %> <span class="meta">(<%= s.email %>)</span></span>
+                        <form method="POST" action="/lists/<%= list.id %>/unshare" style="display:inline;">
+                            <input type="hidden" name="redirect_to" value="<%= returnTo %>">
+                            <input type="hidden" name="user_id" value="<%= s.id %>">
+                            <button type="submit" class="btn btn-danger btn-sm">إزالة</button>
+                        </form>
+                    </div>
+                <% }) %>
+            </div>
+        <% } %>
+    </div>
+</div>
+<% } %>
+
+<script>
+    function toggleHistoryModal() {
+        var el = document.getElementById('history-modal');
+        if (el) el.classList.toggle('open');
+    }
+    function toggleShareModal() {
+        var el = document.getElementById('share-modal');
+        if (el) el.classList.toggle('open');
+    }
+    // Saving/deleting a purchase from the history modal lands back here
+    // with #history, so reopen the modal instead of dropping you on the list.
+    if (window.location.hash === '#history') {
+        toggleHistoryModal();
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+    function showHistoryDay(idx) {
+        document.querySelectorAll('.history-day').forEach(function(el) {
+            el.style.display = (el.id === 'history-day-' + idx) ? 'block' : 'none';
+        });
+    }
+</script>
