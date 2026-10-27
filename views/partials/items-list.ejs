@@ -365,26 +365,17 @@ activeItems.forEach(function(item) {
                 </div>
                 <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" class="inline-form">
                     <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
-                    <select name="brand_select" onchange="handleBrandSelectChange(this, <%= item.id %>);">
-                        <option value="">غير محدد</option>
-                        <%
-                        // A past purchase might only ever have had a detail/size
-                        // noted (e.g. "ابو امين 3 كيلو") with no separate brand
-                        // name typed — still a real, reusable profile, so it's
-                        // listed too, not just ones with a formal brand name.
-                        item.pastBrands.forEach(function(b, bIdx) {
-                            var label = b.brand || b.detail || 'بدون اسم';
-                            if (b.brand && b.detail) label += ' - ' + b.detail;
-                            if (b.storeName) label += ' - ' + b.storeName;
-                            if (b.price !== null) label += ' (' + priceQtyLabel(b.price, b.qty) + ')';
-                        %>
-                            <option value="__past__<%= bIdx %>" data-brand="<%= b.brand || '' %>" data-detail="<%= b.detail || '' %>" data-price="<%= b.price !== null ? b.price : '' %>" data-qty="<%= b.qty !== null ? b.qty : '' %>" data-image="<%= b.image || '' %>" data-store="<%= b.storeId || '' %>"><%= label %></option>
-                        <% }) %>
-                        <option value="__custom__">+ براند جديد</option>
-                    </select>
-                    <input type="text" name="brand_custom" id="brand-custom-<%= item.id %>" placeholder="اسم البراند" style="display:none;">
+                    <%# Past brands are already offered as one-tap re-buy buttons in
+                        the buy panel, so this modal is only for entering a new
+                        one — no past-brand picker here, just the name field. %>
+                    <input type="hidden" name="brand_select" value="__custom__">
+                    <input type="text" name="brand_custom" id="brand-custom-<%= item.id %>" placeholder="اسم البراند">
                     <input type="text" name="brand_detail" id="brand-detail-<%= item.id %>" placeholder="تفاصيل البراند (الحجم/النوع، مثال: كرتون)">
-                    <input type="number" step="1" min="1" inputmode="numeric" name="purchased_qty" id="purchased-qty-<%= item.id %>" placeholder="عدد الوحدات (افتراضيًا 1)">
+                    <div class="qty-picker">
+                        <span class="qty-picker-label">عدد الوحدات</span>
+                        <% [1, 2, 3, 4].forEach(function(n) { %><button type="button" class="qty-chip<%= n === 1 ? ' active' : '' %>" data-qty="<%= n %>" onclick="pickQty(this)"><%= n %></button><% }) %>
+                        <input type="number" step="1" min="1" inputmode="numeric" name="purchased_qty" id="purchased-qty-<%= item.id %>" placeholder="عدد آخر" oninput="syncQtyChips(this)">
+                    </div>
                     <label class="btn btn-outline btn-sm" style="cursor:pointer; flex:0 0 auto; display:inline-flex; align-items:center; gap:4px;">
                         <i data-lucide="camera" class="lucide"></i> التقاط صورة
                         <input type="file" name="brand_image" class="brand-image-input" accept="image/*" capture="environment" style="display:none;" onchange="previewBrandImage(this, <%= item.id %>)">
@@ -505,23 +496,16 @@ if (catGroupOpen) { %></div><% } %>
             if (el.classList.contains('open')) applyCurrentStoreToOpenPanels();
         }
     }
-    // forceNew: opened via "إضافة علامة تجارية" specifically for a brand
-    // that isn't already offered as a one-tap re-buy in the chooser — starts
-    // on "+ براند جديد" with a blank name, instead of showing whatever past
-    // profile happened to be selected last.
+    // forceNew: opened via "إضافة علامة تجارية" for a brand that isn't
+    // already offered as a one-tap re-buy in the buy panel — starts from a
+    // blank form instead of whatever was typed last time.
     function toggleBrandModal(id, forceNew) {
         var el = document.getElementById('brand-modal-' + id);
         if (el) {
             el.classList.toggle('open');
             if (el.classList.contains('open')) {
+                if (forceNew) resetBrandModal(id);
                 applyCurrentStoreToOpenPanels();
-                if (forceNew) {
-                    var select = el.querySelector('select[name="brand_select"]');
-                    if (select) {
-                        select.value = '__custom__';
-                        handleBrandSelectChange(select, id);
-                    }
-                }
             }
         }
     }
@@ -849,60 +833,35 @@ if (catGroupOpen) { %></div><% } %>
         });
     }
 
-    // Each dropdown entry is one distinct (brand, detail, store) profile ever
-    // bought for this item — picking one pre-fills its detail/price/store/photo
-    // exactly as last recorded, a quick "same as last time" shortcut. Every
-    // field stays fully editable afterward, and since "buy" always inserts a
-    // fresh purchase row, any edits are simply saved as a new purchase (and
-    // automatically become their own selectable profile next time) — the
-    // original profile's history is never overwritten.
-    function handleBrandSelectChange(select, id) {
-        var customInput = document.getElementById('brand-custom-' + id);
-        if (select.value === '') {
-            if (customInput) customInput.style.display = 'none';
-            return;
-        }
-
-        var opt = select.options[select.selectedIndex];
-        // A picked past profile's brand name (possibly empty — some past
-        // purchases only ever had a detail/size noted, no separate brand
-        // name) always lands here, editable; "+ براند جديد" starts blank.
-        // Either way this field is what actually gets saved as the brand.
-        var isPast = select.value.indexOf('__past__') === 0;
-        if (customInput) {
-            customInput.style.display = 'block';
-            customInput.value = isPast ? (opt.getAttribute('data-brand') || '') : '';
-        }
-
-        var detailInput = document.getElementById('brand-detail-' + id);
-        if (detailInput) detailInput.value = isPast ? (opt.getAttribute('data-detail') || '') : '';
-
-        var priceInput = document.querySelector('#brand-modal-' + id + ' input[name="price"]');
-        if (priceInput) priceInput.value = isPast ? (opt.getAttribute('data-price') || '') : '';
-
+    // Clears the "new brand" modal back to a blank form (name, detail, price,
+    // qty, store, photo) so each "إضافة علامة تجارية" starts fresh. Re-buying
+    // a past brand goes through the buy panel's one-tap buttons instead.
+    function resetBrandModal(id) {
+        var modal = document.getElementById('brand-modal-' + id);
+        if (!modal) return;
+        ['brand-custom-', 'brand-detail-', 'purchased-qty-', 'existing-brand-image-'].forEach(function(prefix) {
+            var input = document.getElementById(prefix + id);
+            if (input) input.value = '';
+        });
         var qtyInput = document.getElementById('purchased-qty-' + id);
-        if (qtyInput) qtyInput.value = isPast ? (opt.getAttribute('data-qty') || '') : '';
-
-        var storeSelect = document.querySelector('#brand-modal-' + id + ' select[name="store_id"]');
-        if (storeSelect) storeSelect.value = isPast ? (opt.getAttribute('data-store') || '') : '';
-
+        if (qtyInput) syncQtyChips(qtyInput);
+        var priceInput = modal.querySelector('input[name="price"]');
+        if (priceInput) priceInput.value = '';
+        var storeSelect = modal.querySelector('select[name="store_id"]');
+        if (storeSelect) storeSelect.value = '';
+        modal.querySelectorAll('input[name="brand_image"]').forEach(function(inp) { inp.value = ''; });
         var img = document.getElementById('brand-image-preview-' + id);
-        var existingField = document.getElementById('existing-brand-image-' + id);
-        var image = isPast ? opt.getAttribute('data-image') : '';
-        document.querySelectorAll('#brand-modal-' + id + ' input[name="brand_image"]').forEach(function(inp) { inp.value = ''; });
-        if (image) {
-            if (img) { img.src = image; img.style.display = 'inline-block'; }
-            if (existingField) existingField.value = image;
-        } else {
-            if (img) { img.style.display = 'none'; img.src = ''; }
-            if (existingField) existingField.value = '';
-        }
+        if (img) { img.style.display = 'none'; img.src = ''; }
+        ['brand-ai-btn-', 'brand-ai-status-', 'brand-image-status-'].forEach(function(prefix) {
+            var el = document.getElementById(prefix + id);
+            if (el) el.style.display = 'none';
+        });
     }
 
     // Best-effort AI pre-fill from the photo (brand name + a short detail like
     // size/variant), run only when the person explicitly asks for it via the
     // "تعبئة تلقائية" button — never automatically on picking a file. Purely a
-    // suggestion: brand_select/brand_custom/brand_detail stay normal editable
+    // suggestion: brand_custom/brand_detail stay normal editable
     // fields, so anything it fills in can still be corrected or replaced by
     // hand, and a failed/slow analysis just leaves them blank.
     function analyzeBrandImage(id) {
@@ -928,13 +887,8 @@ if (catGroupOpen) { %></div><% } %>
                 }
                 if (statusEl) statusEl.style.display = 'none';
                 if (data.brand) {
-                    var select = document.querySelector('#brand-modal-' + id + ' select[name="brand_select"]');
                     var customInput = document.getElementById('brand-custom-' + id);
-                    if (select && customInput) {
-                        select.value = '__custom__';
-                        customInput.style.display = 'block';
-                        customInput.value = data.brand;
-                    }
+                    if (customInput) customInput.value = data.brand;
                 }
                 if (data.detail) {
                     var detailInput = document.getElementById('brand-detail-' + id);

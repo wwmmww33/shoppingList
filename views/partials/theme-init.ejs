@@ -65,4 +65,25 @@
         if (overlay) overlay.classList.remove('open');
     }
     document.addEventListener('DOMContentLoaded', ensureImageLightbox);
+
+    // Quantity quick-pick (.qty-picker): tapping a number chip fills the
+    // picker's input so common counts need no typing. An empty input means
+    // the default of 1, so the "1" chip shows as selected then — making the
+    // default visible instead of implied. Typing a number by hand keeps the
+    // matching chip, if any, highlighted.
+    function pickQty(chip) {
+        var picker = chip.closest('.qty-picker');
+        var input = picker && picker.querySelector('input');
+        if (!input) return;
+        input.value = chip.getAttribute('data-qty');
+        syncQtyChips(input);
+    }
+    function syncQtyChips(input) {
+        var picker = input.closest('.qty-picker');
+        if (!picker) return;
+        var qty = input.value === '' ? 1 : Number(input.value);
+        picker.querySelectorAll('.qty-chip').forEach(function (chip) {
+            chip.classList.toggle('active', Number(chip.getAttribute('data-qty')) === qty);
+        });
+    }
 </script>

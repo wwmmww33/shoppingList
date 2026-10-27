@@ -796,11 +796,11 @@ router.post('/items/:itemId/buy', uploadBrandImage, async (req, res) => {
   const { item } = ctx;
 
   const storeId = req.body.store_id ? Number(req.body.store_id) : null;
-  // brand_select is only ever a picker (a past profile's index, "__custom__",
-  // or empty) — the brand name actually saved always comes from brand_custom,
-  // which the client fills in (editably) for any non-empty selection. This
-  // also means a past purchase that only ever had a detail/size noted, with
-  // no separate brand name, still works as a reusable "profile" to pick from.
+  // brand_select is a flag ("__custom__" from both the new-brand modal and the
+  // one-tap past-brand buttons; empty from a plain buy) — the brand name
+  // actually saved always comes from brand_custom. A past purchase that only
+  // ever had a detail/size noted, with no separate brand name, still works as
+  // a reusable one-tap "profile".
   const brand = (req.body.brand_select || '').trim() ? (req.body.brand_custom || '').trim() || null : null;
   const brandDetail = (req.body.brand_detail || '').trim() || null;
   // No new photo picked? Fall back to whichever existing thumbnail the client

@@ -26,13 +26,13 @@
             <label class="field">التفاصيل
                 <input type="text" name="brand_detail" id="edit-purchase-detail" placeholder="الحجم/النوع، مثال: كرتون">
             </label>
-            <div class="form-row">
-                <label class="field">سعر الوحدة
-                    <input type="number" step="0.001" min="0" inputmode="decimal" name="price" id="edit-purchase-price" placeholder="اختياري">
-                </label>
-                <label class="field">الكمية
-                    <input type="number" step="1" min="1" inputmode="numeric" name="purchased_qty" id="edit-purchase-qty" placeholder="1">
-                </label>
+            <label class="field">سعر الوحدة
+                <input type="number" step="0.001" min="0" inputmode="decimal" name="price" id="edit-purchase-price" placeholder="اختياري">
+            </label>
+            <div class="qty-picker">
+                <span class="qty-picker-label">الكمية</span>
+                <% [1, 2, 3, 4].forEach(function(n) { %><button type="button" class="qty-chip<%= n === 1 ? ' active' : '' %>" data-qty="<%= n %>" onclick="pickQty(this)"><%= n %></button><% }) %>
+                <input type="number" step="1" min="1" inputmode="numeric" name="purchased_qty" id="edit-purchase-qty" placeholder="عدد آخر" oninput="syncQtyChips(this)">
             </div>
             <div class="form-row">
                 <label class="field">التاريخ
@@ -80,6 +80,7 @@
         document.getElementById('edit-purchase-detail').value = p.detail || '';
         document.getElementById('edit-purchase-price').value = p.price;
         document.getElementById('edit-purchase-qty').value = p.qty;
+        syncQtyChips(document.getElementById('edit-purchase-qty'));
         document.getElementById('edit-purchase-date').value = p.date || '';
         document.getElementById('edit-purchase-time').value = p.time || '';
         document.querySelectorAll('.edit-purchase-file').forEach(function(inp) { inp.value = ''; });
