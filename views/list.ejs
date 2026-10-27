@@ -21,20 +21,12 @@
                     <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="pin" class="lucide"></i> <%= isPinned ? 'إلغاء التثبيت' : 'تثبيت في الرئيسية' %></button>
                 </form>
                 <% if (isOwner) { %>
-                    <button type="button" class="btn btn-outline btn-sm" onclick="toggleRename()">تعديل الاسم</button>
-                    <form method="POST" action="/lists/<%= list.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف القائمة وكل محتوياتها نهائيًا؟');">
-                        <button type="submit" class="btn btn-danger btn-sm">حذف القائمة</button>
-                    </form>
+                    <%# Rename + delete live in the settings modal, not the header,
+                        so deleting the list can't happen from a stray tap. %>
+                    <button type="button" class="icon-btn" title="إعدادات القائمة" onclick="toggleListSettings()"><i data-lucide="settings" class="lucide"></i></button>
                 <% } %>
             </div>
         </div>
-
-        <% if (isOwner) { %>
-        <form method="POST" action="/lists/<%= list.id %>/rename" id="rename-form" class="inline-form card" style="display:none;">
-            <input type="text" name="title" value="<%= list.title %>" required class="flex-1">
-            <button type="submit" class="btn btn-success btn-sm">حفظ</button>
-        </form>
-        <% } %>
 
         <div id="items-list-root">
         <%- include('partials/items-list', {
@@ -57,10 +49,46 @@
 
     <%- include('partials/list-modals', { list: list, isOwner: isOwner, shares: shares, shoppingHistory: shoppingHistory, stores: stores, returnTo: '/lists/' + list.id }) %>
 
+    <% if (isOwner) { %>
+    <div class="modal-overlay" id="list-settings-modal" onclick="if (event.target === this) toggleListSettings()">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>إعدادات القائمة</h3>
+                <button type="button" class="icon-btn" title="إغلاق" onclick="toggleListSettings()"><i data-lucide="x" class="lucide"></i></button>
+            </div>
+            <form method="POST" action="/lists/<%= list.id %>/rename" class="inline-form">
+                <label class="field">اسم القائمة
+                    <input type="text" name="title" value="<%= list.title %>" required>
+                </label>
+                <button type="submit" class="btn btn-success btn-sm">حفظ الاسم</button>
+            </form>
+
+            <%# Deleting needs the list's exact name typed first (on top of the
+                confirm), so it can't be done by accident. %>
+            <div class="danger-zone">
+                <h4><i data-lucide="triangle-alert" class="lucide"></i> حذف القائمة</h4>
+                <p>يحذف القائمة وكل أغراضها وسجل مشترياتها نهائيًا، ولا يمكن التراجع عنه.</p>
+                <form method="POST" action="/lists/<%= list.id %>/delete" class="inline-form" onsubmit="return confirm('حذف القائمة وكل محتوياتها نهائيًا؟');">
+                    <label class="field">للتأكيد اكتب اسم القائمة: <strong><%= list.title %></strong>
+                        <input type="text" id="delete-list-confirm" autocomplete="off" data-title="<%= list.title %>" oninput="document.getElementById('delete-list-btn').disabled = this.value.trim() !== this.dataset.title.trim();">
+                    </label>
+                    <button type="submit" class="btn btn-danger btn-sm" id="delete-list-btn" disabled>حذف القائمة نهائيًا</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <% } %>
+
     <script>
-        function toggleRename() {
-            var f = document.getElementById('rename-form');
-            if (f) f.style.display = (f.style.display === 'none' || !f.style.display) ? 'flex' : 'none';
+        function toggleListSettings() {
+            var el = document.getElementById('list-settings-modal');
+            if (!el) return;
+            el.classList.toggle('open');
+            // Always reopen with the delete confirmation cleared and locked.
+            var confirmInput = document.getElementById('delete-list-confirm');
+            if (confirmInput) confirmInput.value = '';
+            var btn = document.getElementById('delete-list-btn');
+            if (btn) btn.disabled = true;
         }
     </script>
 </body>

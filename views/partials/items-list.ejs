@@ -138,8 +138,9 @@ function priceQtyLabel(price, qty) {
 <div class="fab-group" id="fab-group-<%= listId %>">
     <button type="button" class="fab fab-secondary" title="المشتراة والملغاة" onclick="toggleArchiveDrawer()">
         <i data-lucide="archive" class="lucide"></i>
-        <% if (archivedItems.length > 0) { %>
-            <span class="fab-badge"><%= archivedItems.length %></span>
+        <% const archivedOnlyCount = archivedItems.filter(function(i) { return i.status !== 'active'; }).length; %>
+        <% if (archivedOnlyCount > 0) { %>
+            <span class="fab-badge"><%= archivedOnlyCount %></span>
         <% } %>
     </button>
     <button type="button" class="fab" title="إضافة غرض" onclick="toggleAddItemModal('<%= listId %>')">
@@ -300,9 +301,9 @@ activeItems.forEach(function(item) {
         </div>
         <div class="item-icons">
             <div class="item-icons-extra" id="item-icons-extra-<%= item.id %>" style="display:none;">
-                <button type="button" class="icon-btn" title="تعديل" onclick="event.stopPropagation(); toggleEditPanel(<%= item.id %>)"><i data-lucide="pencil" class="lucide"></i></button>
+                <button type="button" class="icon-btn" title="تعديل" onclick="event.stopPropagation(); toggleEditPanel(<%= item.id %>, this)"><i data-lucide="pencil" class="lucide"></i></button>
                 <% if (availableLists.length > 0) { %>
-                    <button type="button" class="icon-btn" title="نقل أو نسخ لقائمة أخرى" onclick="event.stopPropagation(); toggleMovePanel(<%= item.id %>)"><i data-lucide="move" class="lucide"></i></button>
+                    <button type="button" class="icon-btn" title="نقل أو نسخ لقائمة أخرى" onclick="event.stopPropagation(); toggleMovePanel(<%= item.id %>, this)"><i data-lucide="move" class="lucide"></i></button>
                 <% } %>
                 <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/cancel" style="display:inline;" onclick="event.stopPropagation();">
                     <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
@@ -427,6 +428,9 @@ lastCategory = '__none__';
 let catGroupOpen = false;
 archivedItems.forEach(function(item) {
     const isBought = item.status === 'bought';
+    // Active items are listed here too, highlighted, so a restored item stays
+    // put instead of vanishing (see loadItemsForList).
+    const isInActiveList = item.status === 'active';
     if (activeSort === 'category') {
         const cat = item.category || '';
         if (cat !== lastCategory) {
@@ -441,13 +445,24 @@ archivedItems.forEach(function(item) {
         }
     }
 %>
-    <div class="item-row <%= isBought ? 'bought' : 'cancelled' %> no-expand" data-item-id="<%= item.id %>">
+    <div class="item-row <%= isInActiveList ? 'in-active-list' : (isBought ? 'bought' : 'cancelled') %> no-expand" data-item-id="<%= item.id %>">
         <div class="item-line">
-            <% if (isBought && item.last_brand_image) { %><img src="<%= item.last_brand_image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="openImageLightbox(this.src)"><% } %>
+            <% if (item.last_brand_image) { %><img src="<%= item.last_brand_image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="openImageLightbox(this.src)"><% } %>
             <span class="item-name"><%= item.name %></span>
+            <span class="in-active-badge"><i data-lucide="check" class="lucide"></i> في القائمة</span>
             <%- qtyLabel(item) %>
             <% if (isBought && item.is_weekly) { %><i data-lucide="repeat" class="lucide icon-badge" title="أسبوعي - <%= weekdayNames[item.weekly_weekday] %>"></i><% } %>
             <% if (isBought && item.hidden_from_shared) { %><i data-lucide="eye-off" class="lucide icon-badge" title="مخفي عن المشاركين"></i><% } %>
+            <%# Both restore (icon, below) and this undo are always rendered; CSS
+                shows whichever fits the row's current state, so a just-tapped
+                row has the opposite action ready without waiting for a refresh. %>
+            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/unrestore" class="unrestore-form">
+                <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                <%# Filled in by the restore tap with the row's status just before it
+                    (see submitOptimistic), so "تراجع" puts it back exactly. %>
+                <input type="hidden" name="prev_status" class="unrestore-prev" value="">
+                <button type="submit" class="unrestore-btn" title="إزالة من القائمة النشطة"><i data-lucide="x" class="lucide"></i> تراجع</button>
+            </form>
         </div>
         <% if (item.last_bought_at) { %>
         <div class="item-sub">
@@ -458,22 +473,27 @@ archivedItems.forEach(function(item) {
             <% if (isBought && item.is_weekly && item.next_due_date) { %>· يرجع تلقائيًا: <%= String(item.next_due_date).split('-').reverse().join('-') %><% } %>
         </div>
         <% } %>
+        <%# Green "في القائمة" rows keep the full set of actions too (hidden by
+            CSS while green), so after "تراجع" the row is immediately complete
+            again. A green row that was bought before counts as bought here,
+            which is where "تراجع" will put it back. %>
+        <% const showBoughtActions = isBought || (isInActiveList && item.last_bought_at); %>
         <div class="item-icons">
-            <button type="button" class="icon-btn" title="تعديل" onclick="toggleEditPanel(<%= item.id %>)"><i data-lucide="pencil" class="lucide"></i></button>
+            <button type="button" class="icon-btn" title="تعديل" onclick="toggleEditPanel(<%= item.id %>, this)"><i data-lucide="pencil" class="lucide"></i></button>
             <% if (availableLists.length > 0) { %>
-                <button type="button" class="icon-btn" title="نقل أو نسخ لقائمة أخرى" onclick="toggleMovePanel(<%= item.id %>)"><i data-lucide="move" class="lucide"></i></button>
+                <button type="button" class="icon-btn" title="نقل أو نسخ لقائمة أخرى" onclick="toggleMovePanel(<%= item.id %>, this)"><i data-lucide="move" class="lucide"></i></button>
             <% } %>
-            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/reopen" style="display:inline;">
+            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/reopen" class="reopen-form">
                 <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
                 <button type="submit" class="icon-btn" title="<%= isBought ? 'إرجاع للنشطة' : 'استرجاع' %>"><i data-lucide="rotate-ccw" class="lucide"></i></button>
             </form>
-            <% if (isBought && isOwner) { %>
+            <% if (showBoughtActions && isOwner) { %>
                 <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/toggle-hidden" style="display:inline;">
                     <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
                     <button type="submit" class="icon-btn" title="<%= item.hidden_from_shared ? 'إظهار للمشاركين' : 'إخفاء عن المشاركين' %>"><i data-lucide="<%= item.hidden_from_shared ? 'eye' : 'eye-off' %>" class="lucide"></i></button>
                 </form>
             <% } %>
-            <% if (isBought) { %>
+            <% if (showBoughtActions) { %>
                 <a href="/items/<%= item.id %>/history" class="icon-btn" title="سجل الشراء"><i data-lucide="bar-chart-2" class="lucide"></i></a>
             <% } %>
             <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذا الغرض نهائيًا؟');">
@@ -481,6 +501,8 @@ archivedItems.forEach(function(item) {
                 <button type="submit" class="icon-btn" title="حذف"><i data-lucide="trash-2" class="lucide"></i></button>
             </form>
         </div>
+        <%# Panels are looked up within this row (findItemPanel), so sharing
+            ids with the same item's active-list row is harmless. %>
         <%- include('item-edit-panel', { item: item, weekdayNames: weekdayNames, itemCategories: itemCategories, units: unitList, stores: stores, redirectTarget: redirectTarget }) %>
         <%- include('item-move-panel', { item: item, availableLists: availableLists, redirectTarget: redirectTarget }) %>
     </div>
@@ -516,12 +538,20 @@ if (catGroupOpen) { %></div><% } %>
         var extra = document.getElementById('item-icons-extra-' + id);
         if (extra) extra.style.display = (extra.style.display === 'flex') ? 'none' : 'flex';
     }
-    function toggleEditPanel(id) {
-        var el = document.getElementById('edit-panel-' + id);
+    // An item can be rendered twice (its active-list row and its green
+    // "في القائمة" row in the archive drawer), each with its own edit/move
+    // panel — so look the panel up inside the tapped button's own row, and
+    // only fall back to the id when called without one.
+    function findItemPanel(prefix, id, btn) {
+        var row = btn && btn.closest('.item-row');
+        return (row && row.querySelector('#' + prefix + id)) || document.getElementById(prefix + id);
+    }
+    function toggleEditPanel(id, btn) {
+        var el = findItemPanel('edit-panel-', id, btn);
         if (el) el.classList.toggle('open');
     }
-    function toggleMovePanel(id) {
-        var el = document.getElementById('move-panel-' + id);
+    function toggleMovePanel(id, btn) {
+        var el = findItemPanel('move-panel-', id, btn);
         if (el) el.classList.toggle('open');
     }
     // "تم شراؤها"/"ملغاة" live in their own side panel (sliding from the
@@ -1194,6 +1224,12 @@ if (catGroupOpen) { %></div><% } %>
             return false;
         }
         if (root.innerHTML === newRoot.innerHTML) return false;
+        // Replacing the markup resets every scroll position inside it (the
+        // archive drawer snapped back to the top after each restore), so
+        // keep the page's and the drawer's scroll offsets across the swap.
+        var oldDrawer = document.getElementById('archive-drawer');
+        var drawerScrollTop = oldDrawer ? oldDrawer.scrollTop : 0;
+        var pageScrollY = window.scrollY;
         root.innerHTML = newRoot.innerHTML;
 
         openIds.forEach(function(id) {
@@ -1203,6 +1239,9 @@ if (catGroupOpen) { %></div><% } %>
             var btn = root.querySelector('[onclick*="\'' + id + '\'"]');
             if (btn) btn.classList.add('open');
         });
+        var newDrawer = document.getElementById('archive-drawer');
+        if (newDrawer) newDrawer.scrollTop = drawerScrollTop;
+        window.scrollTo(0, pageScrollY);
 
         if (window.renderIcons) renderIcons();
         renderStoreLocatorState();
@@ -1246,12 +1285,165 @@ if (catGroupOpen) { %></div><% } %>
     }
     setupAjaxSortLinks();
 
+    // Optimistic item actions: buy/cancel/delete/move take the row out of
+    // view the instant they're tapped — restore marks its archive row as
+    // "في القائمة" in place, and its "تراجع" (unrestore) clears that mark and
+    // drops the item from the active list — while the server request runs in
+    // the background, instead of making the person wait for a full round
+    // trip plus a server-side re-render of the whole list.
+    //
+    // optimisticPending: item id -> { count of its requests still in flight,
+    // mode of the latest: 'restore' | 'unrestore' | 'hide' }; the optimistic
+    // look is re-applied after any refresh (another action's response, the
+    // live-sync poller) that briefly re-renders the stale server state.
+    // optimisticInflight gates refreshes: only the response that brings it
+    // back to 0 is applied, so out-of-order responses can't resurrect a row
+    // a later tap already removed.
+    var optimisticPending = {};
+    var optimisticInflight = 0;
+    var optimisticBatched = false;
+    var pendingBuyRequests = {};
+    var OPTIMISTIC_ACTIONS = /\/items\/(\d+)\/(buy|cancel|reopen|unrestore|delete|move)$/;
+
+    // Automatic refreshes (an optimistic action's server reply, the shared-
+    // list poller) wait until the person has been idle for IDLE_REFRESH_MS,
+    // so the list never re-renders while they're in the middle of picking
+    // items — their own taps already show instantly. Only deliberate input
+    // counts as activity (not 'scroll', which a refresh's own scroll
+    // restore would also fire); touch covers scrolling on phones, wheel on
+    // desktop.
+    var IDLE_REFRESH_MS = 20000;
+    var lastActivityAt = Date.now();
+    var deferredRefresh = false;
+    ['pointerdown', 'touchstart', 'touchmove', 'keydown', 'wheel', 'input'].forEach(function(type) {
+        document.addEventListener(type, function() { lastActivityAt = Date.now(); }, { capture: true, passive: true });
+    });
+    function userIsActive() {
+        return Date.now() - lastActivityAt < IDLE_REFRESH_MS;
+    }
+    // Panels/modals with half-entered input are never refreshed under the
+    // person, idle or not (a modal is meant to close once its action
+    // completes, so its 'open' state isn't preserved across a refresh).
+    function hasOpenInteraction() {
+        if (document.querySelector('.buy-panel.open, .edit-panel.open, .move-panel.open, .modal-overlay.open')) return true;
+        var suggestion = document.getElementById('store-locator-suggestion');
+        if (suggestion && suggestion.style.display !== 'none') return true;
+        return false;
+    }
+    function canAutoRefresh() {
+        return document.visibilityState === 'visible' && optimisticInflight === 0 && !userIsActive() && !hasOpenInteraction();
+    }
+    setInterval(function() {
+        if (deferredRefresh && canAutoRefresh()) {
+            deferredRefresh = false;
+            refreshItemsListNow();
+        }
+    }, 2000);
+
+    function hideOptimisticRows() {
+        Object.keys(optimisticPending).forEach(function(id) {
+            var mode = optimisticPending[id].mode;
+            document.querySelectorAll('.item-row[data-item-id="' + id + '"]').forEach(function(row) {
+                var inDrawer = !!row.closest('#archive-drawer');
+                if (mode === 'restore') {
+                    if (inDrawer) row.classList.add('in-active-list');
+                } else if (mode === 'unrestore') {
+                    if (inDrawer) row.classList.remove('in-active-list');
+                    else row.classList.add('optimistic-hidden');
+                } else {
+                    row.classList.add('optimistic-hidden');
+                }
+            });
+        });
+    }
+    function optimisticModeFor(actionUrl) {
+        if (/\/reopen$/.test(actionUrl)) return 'restore';
+        if (/\/unrestore$/.test(actionUrl)) return 'unrestore';
+        return 'hide';
+    }
+    function showActionError(message) {
+        ensureUndoToast();
+        var toast = document.getElementById('undo-buy-toast');
+        document.getElementById('undo-buy-text').textContent = message;
+        document.getElementById('undo-buy-btn').style.display = 'none';
+        toast.classList.add('open');
+        clearTimeout(undoBuyTimer);
+        undoBuyTimer = setTimeout(function() { toast.classList.remove('open'); }, 5000);
+    }
+    function refreshItemsListNow() {
+        fetch(window.location.href)
+            .then(function(res) { return res.text(); })
+            .then(function(html) { applyFetchedHtml(html, null); })
+            .catch(function() {});
+    }
+
+    // Returns the request promise (resolving to the response HTML) so a
+    // follow-up like "undo purchase" can wait for the original to land.
+    function submitOptimistic(form, actionUrl, body, itemId, isBuy) {
+        var row = form.closest('.item-row');
+        row.querySelectorAll('.modal-overlay.open').forEach(function(m) { m.classList.remove('open'); });
+        var pending = optimisticPending[itemId] || (optimisticPending[itemId] = { count: 0 });
+        pending.count++;
+        var mode = pending.mode = optimisticModeFor(actionUrl);
+        if (mode === 'restore') {
+            var prevField = row.querySelector('.unrestore-prev');
+            if (prevField) prevField.value = row.classList.contains('bought') ? 'bought' : 'cancelled';
+        }
+        if (optimisticInflight > 0) optimisticBatched = true;
+        optimisticInflight++;
+        hideOptimisticRows();
+
+        var settle = function() {
+            pending.count--;
+            if (pending.count <= 0) delete optimisticPending[itemId];
+            optimisticInflight--;
+        };
+        var request = fetch(actionUrl, { method: 'POST', body: body })
+            .then(function(res) {
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.text();
+            });
+        request
+            .then(function(html) {
+                settle();
+                if (optimisticInflight > 0) return;
+                if (optimisticBatched || !canAutoRefresh()) {
+                    // Either several taps overlapped (this response may
+                    // predate the others' changes) or the person is still
+                    // busy — fetch one fresh copy once they've gone idle.
+                    optimisticBatched = false;
+                    deferredRefresh = true;
+                } else {
+                    applyFetchedHtml(html, null);
+                }
+                hideOptimisticRows();
+            })
+            .catch(function() {
+                settle();
+                // Put back whatever this tap changed (mode is this request's,
+                // not pending.mode, which a later tap may have overwritten).
+                document.querySelectorAll('.item-row[data-item-id="' + itemId + '"]').forEach(function(r) {
+                    r.classList.remove('optimistic-hidden');
+                    if (!r.closest('#archive-drawer')) return;
+                    if (mode === 'restore') r.classList.remove('in-active-list');
+                    else if (mode === 'unrestore') r.classList.add('in-active-list');
+                });
+                showActionError(isBuy ? 'تعذّر حفظ الشراء — تحقق من الاتصال وحاول مرة أخرى' : 'تعذّر تنفيذ العملية — تحقق من الاتصال وحاول مرة أخرى');
+                if (optimisticInflight === 0) refreshItemsListNow();
+            });
+        return request;
+    }
+
     // Submit item actions (buy/cancel/restore/delete/hide/edit/move/add) over fetch
     // instead of a real navigation, so scroll position and the current sort/filter
     // (?sort=...) survive the action instead of being lost to a full page reload.
     document.addEventListener('submit', function(e) {
         var form = e.target;
         if (!form.matches('[data-ajax-item-action]')) return;
+        // An inline onsubmit (e.g. delete's confirm()) that returned false has
+        // already cancelled this submit — without this check the request was
+        // still sent from here even after pressing "Cancel".
+        if (e.defaultPrevented) return;
         e.preventDefault();
 
         if (!document.getElementById('items-list-root')) { form.submit(); return; }
@@ -1276,19 +1468,32 @@ if (catGroupOpen) { %></div><% } %>
         var qtyField = form.querySelector('input[name="purchased_qty"]');
         var buyQty = qtyField && qtyField.value !== '' && !isNaN(Number(qtyField.value)) ? Number(qtyField.value) : null;
 
-        var doSubmit = function() {
-            // Sent as URL-encoded (not raw multipart FormData) because the server
-            // only parses application/x-www-form-urlencoded bodies; a raw FormData
-            // body silently drops every field server-side, including redirect_to.
-            // Exception: a form carrying an actual selected file (the optional
-            // brand photo) is sent as real multipart, which the buy route alone
-            // knows how to parse (via multer) — converting it to URLSearchParams
-            // would stringify the File and lose the image data entirely.
+        // Sent as URL-encoded (not raw multipart FormData) because the server
+        // only parses application/x-www-form-urlencoded bodies; a raw FormData
+        // body silently drops every field server-side, including redirect_to.
+        // Exception: a form carrying an actual selected file (the optional
+        // brand photo) is sent as real multipart, which the buy route alone
+        // knows how to parse (via multer) — converting it to URLSearchParams
+        // would stringify the File and lose the image data entirely.
+        var buildBody = function() {
             var hasFile = Array.from(form.querySelectorAll('input[type="file"]')).some(function(f) {
                 return f.files && f.files.length > 0;
             });
-            var body = hasFile ? new FormData(form) : new URLSearchParams(new FormData(form));
-            fetch(actionUrl, { method: 'POST', body: body })
+            return hasFile ? new FormData(form) : new URLSearchParams(new FormData(form));
+        };
+
+        if (row && itemId && OPTIMISTIC_ACTIONS.test(actionUrl)) {
+            var request = submitOptimistic(form, actionUrl, buildBody(), itemId, isBuy);
+            if (isBuy) {
+                pendingBuyRequests[itemId] = request;
+                showUndoBuyToast(itemId, itemName, currentRedirect);
+                handleBuySuccess(buyPrice, buyQty);
+            }
+            return;
+        }
+
+        var doSubmit = function() {
+            fetch(actionUrl, { method: 'POST', body: buildBody() })
                 .then(function(res) { return res.text(); })
                 .then(function(html) {
                     applyFetchedHtml(html, actionUrl);
@@ -1327,15 +1532,23 @@ if (catGroupOpen) { %></div><% } %>
         var toast = document.getElementById('undo-buy-toast');
         document.getElementById('undo-buy-text').textContent = 'تم شراء ' + (itemName || 'الغرض');
         var btn = document.getElementById('undo-buy-btn');
+        btn.style.display = '';
         btn.onclick = function() {
             clearTimeout(undoBuyTimer);
             toast.classList.remove('open');
-            fetch('/items/' + itemId + '/undo-buy', {
-                method: 'POST',
-                body: new URLSearchParams({ redirect_to: redirectTo || '' }),
-            })
+            // The purchase itself may still be in flight (optimistic buy) —
+            // undo only once it's saved, or there'd be nothing to undo yet.
+            var pendingBuy = pendingBuyRequests[itemId] || Promise.resolve();
+            pendingBuy
+                .catch(function() {})
+                .then(function() {
+                    return fetch('/items/' + itemId + '/undo-buy', {
+                        method: 'POST',
+                        body: new URLSearchParams({ redirect_to: redirectTo || '' }),
+                    });
+                })
                 .then(function(res) { return res.text(); })
-                .then(function(html) { applyFetchedHtml(html, null); });
+                .then(function(html) { applyFetchedHtml(html, null); hideOptimisticRows(); });
         };
         toast.classList.add('open');
         clearTimeout(undoBuyTimer);
@@ -1344,35 +1557,23 @@ if (catGroupOpen) { %></div><% } %>
 
     // Live sync for shared lists: periodically re-fetches this same page and
     // swaps in the items fragment if another member added/bought/cancelled
-    // something — but only while the tab is actually visible, and never while
-    // the person has a buy/edit/move panel or the store-locator prompt open,
-    // so an in-progress action is never yanked out from under them.
+    // something — only while the tab is visible and the person has been idle
+    // for IDLE_REFRESH_MS with nothing half-entered (see canAutoRefresh), so
+    // the list is never re-rendered while they're using it. The archive
+    // drawer may be open: its open state, groups and scroll are preserved.
     <% if (typeof isSharedList !== 'undefined' && isSharedList) { %>
     (function() {
         var POLL_INTERVAL_MS = 8000;
-        function hasOpenInteraction() {
-            if (document.querySelector('.buy-panel.open, .edit-panel.open, .move-panel.open')) return true;
-            var suggestion = document.getElementById('store-locator-suggestion');
-            if (suggestion && suggestion.style.display !== 'none') return true;
-            // Pause polling while the bought/cancelled drawer is open — even
-            // though its open state (and any expanded category group) does
-            // get restored after a refresh, a person actively reading through
-            // it shouldn't have the content swapped out from under them.
-            var archiveDrawer = document.getElementById('archive-drawer');
-            if (archiveDrawer && archiveDrawer.classList.contains('open')) return true;
-            // Pause while any modal (add item, add store) is open — its
-            // 'open' state is NOT in the preserved-ids list on purpose (a
-            // modal is meant to close once its action completes), so a
-            // mid-typing refresh would wipe out whatever was being entered.
-            if (document.querySelector('.modal-overlay.open')) return true;
-            return false;
-        }
         function poll() {
-            if (document.visibilityState === 'visible' && !hasOpenInteraction()) {
+            if (canAutoRefresh()) {
                 fetch(window.location.href)
                     .then(function(res) { return res.text(); })
                     .catch(function() { return null; })
-                    .then(function(html) { if (html) applyFetchedHtml(html, null); });
+                    .then(function(html) {
+                        // Re-check: they may have become active (or started an
+                        // action) while this was in flight.
+                        if (html && canAutoRefresh()) applyFetchedHtml(html, null);
+                    });
             }
         }
         setInterval(poll, POLL_INTERVAL_MS);

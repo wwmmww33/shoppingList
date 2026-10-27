@@ -17,6 +17,9 @@
         <% if (shoppingHistory.length === 0) { %>
             <p style="color: var(--text-muted);">لا يوجد سجل شراء بعد لهذه القائمة.</p>
         <% } else { %>
+            <button type="button" class="btn btn-outline btn-sm" id="history-order-btn" onclick="toggleHistoryOrder()" title="عكس الترتيب" style="margin-bottom:8px;">
+                <i data-lucide="arrow-up-down" class="lucide"></i> <span id="history-order-label">الأحدث أولًا</span>
+            </button>
             <select id="history-day-select" onchange="showHistoryDay(this.value)" style="margin-bottom:12px;">
                 <% shoppingHistory.forEach(function(day, idx) { %>
                     <option value="<%= idx %>"><%= day.dateLabel %> (<%= day.items.length %> غرض)</option>
@@ -38,7 +41,9 @@
                         <div class="list-row" style="font-size:0.88rem;">
                             <span>
                                 <%= it.name %>
-                                <% if (it.brand) { %>· <%= it.brand %><% if (it.detail) { %> (<%= it.detail %>)<% } %><% } %>
+                                <%# Details show even without a brand name — some purchases only have them. %>
+                                <% if (it.brand) { %>· <%= it.brand %><% } %>
+                                <% if (it.detail) { %><%= it.brand ? '' : '·' %> (<%= it.detail %>)<% } %>
                                 <% if (it.storeName) { %>· <%= it.storeName %><% } %>
                             </span>
                             <span style="display:flex; align-items:center; gap:4px;">
@@ -108,4 +113,22 @@
             el.style.display = (el.id === 'history-day-' + idx) ? 'block' : 'none';
         });
     }
+    // The server renders newest first (days, and purchases within each day);
+    // this flips both in place and jumps to the first day in the new order.
+    // The choice is remembered per browser.
+    var historyOrderAsc = false;
+    function toggleHistoryOrder() {
+        var select = document.getElementById('history-day-select');
+        if (!select) return;
+        historyOrderAsc = !historyOrderAsc;
+        Array.from(select.options).reverse().forEach(function(opt) { select.appendChild(opt); });
+        document.querySelectorAll('.history-day').forEach(function(day) {
+            Array.from(day.querySelectorAll(':scope > .list-row')).reverse().forEach(function(row) { day.appendChild(row); });
+        });
+        select.selectedIndex = 0;
+        showHistoryDay(select.value);
+        document.getElementById('history-order-label').textContent = historyOrderAsc ? 'الأقدم أولًا' : 'الأحدث أولًا';
+        try { localStorage.setItem('historyOrder', historyOrderAsc ? 'asc' : 'desc'); } catch (e) {}
+    }
+    try { if (localStorage.getItem('historyOrder') === 'asc') toggleHistoryOrder(); } catch (e) {}
 </script>

@@ -70,7 +70,7 @@ router.get('/logout', (req, res) => {
 });
 
 router.get('/account', requireAuth, async (req, res) => {
-  const itemCategories = await all('SELECT * FROM item_categories ORDER BY id ASC');
+  const itemCategories = await all('SELECT * FROM item_categories ORDER BY sort_order ASC, id ASC');
   res.render('account', { error: null, success: null, itemCategories, customCategoryIcons: CUSTOM_CATEGORY_ICONS });
 });
 
@@ -80,7 +80,7 @@ router.post('/account/password', requireAuth, async (req, res) => {
   const confirmPassword = req.body.confirm_password || '';
 
   const renderAccount = async (error, success) => {
-    const itemCategories = await all('SELECT * FROM item_categories ORDER BY id ASC');
+    const itemCategories = await all('SELECT * FROM item_categories ORDER BY sort_order ASC, id ASC');
     res.render('account', { error, success, itemCategories, customCategoryIcons: CUSTOM_CATEGORY_ICONS });
   };
 

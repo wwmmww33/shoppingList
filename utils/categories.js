@@ -39,6 +39,7 @@ const CUSTOM_CATEGORY_ICONS = [
   'snowflake', 'spray-can', 'droplet', 'baby', 'cooking-pot', 'pill', 'shirt', 'sparkles',
   'book-open', 'gamepad-2', 'music', 'car', 'plane', 'gift', 'flower-2', 'leaf', 'flame',
   'fish', 'beer', 'pizza', 'wrench', 'heart-pulse', 'paintbrush', 'dumbbell', 'cat', 'dog',
+  'bean', 'hammer', 'sprout', 'footprints',
 ];
 
 // A small rotating accent palette for new categories (manual or AI-suggested),

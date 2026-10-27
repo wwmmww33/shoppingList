@@ -23,7 +23,9 @@
         <a href="/logout"><i data-lucide="log-out" class="lucide"></i> خروج (<%= user.name %>)</a>
     </nav>
 
-    <% if (typeof ownedLists !== 'undefined') { %>
+    <%# navOwnedLists / navSharedLists come from the attachNavLists middleware,
+        so this section shows on every signed-in page, not just the home page. %>
+    <% if (typeof navOwnedLists !== 'undefined') { %>
         <hr style="border:none; border-top:1px solid var(--border); margin:14px 0;">
 
         <button type="button" class="collapsible-toggle" onclick="toggleCollapsible('create-list-box')">
@@ -38,13 +40,13 @@
         </div>
 
         <h4 style="margin:16px 0 6px;">قوائمي</h4>
-        <% if (ownedLists.length === 0) { %>
+        <% if (navOwnedLists.length === 0) { %>
             <p style="color: var(--text-muted); font-size:0.9rem;">لا توجد قوائم بعد.</p>
         <% } %>
-        <% ownedLists.forEach(function(l) { %>
+        <% navOwnedLists.forEach(function(l) { %>
             <div class="list-row">
                 <a href="/lists/<%= l.id %>"><%= l.title %></a>
-                <% if (pinnedList && pinnedList.id === l.id) { %>
+                <% if (user.default_list_id === l.id) { %>
                     <span class="badge"><i data-lucide="pin" class="lucide"></i> مثبتة</span>
                 <% } else { %>
                     <form method="POST" action="/lists/<%= l.id %>/pin">
@@ -56,14 +58,14 @@
         <% }) %>
 
         <h4 style="margin:16px 0 6px;">قوائم شاركها معي آخرون</h4>
-        <% if (sharedLists.length === 0) { %>
+        <% if (navSharedLists.length === 0) { %>
             <p style="color: var(--text-muted); font-size:0.9rem;">لا توجد قوائم مشاركة معك.</p>
         <% } %>
-        <% sharedLists.forEach(function(l) { %>
+        <% navSharedLists.forEach(function(l) { %>
             <div class="list-row">
                 <a href="/lists/<%= l.id %>"><%= l.title %></a>
                 <span class="meta">بواسطة <%= l.owner_name %></span>
-                <% if (pinnedList && pinnedList.id === l.id) { %>
+                <% if (user.default_list_id === l.id) { %>
                     <span class="badge"><i data-lucide="pin" class="lucide"></i> مثبتة</span>
                 <% } else { %>
                     <form method="POST" action="/lists/<%= l.id %>/pin">

@@ -5,7 +5,7 @@ const session = require('express-session');
 const FileStore = require('session-file-store')(session);
 
 const { init } = require('./db');
-const { attachUser, requireAuth, requireAdmin } = require('./middleware/auth');
+const { attachUser, attachNavLists, requireAuth, requireAdmin } = require('./middleware/auth');
 const authRoutes = require('./routes/auth');
 const listsRoutes = require('./routes/lists');
 const storesRoutes = require('./routes/stores');
@@ -31,6 +31,7 @@ app.use(
 );
 
 app.use(attachUser);
+app.use(attachNavLists);
 
 app.use('/', authRoutes);
 app.use('/', requireAuth, listsRoutes);

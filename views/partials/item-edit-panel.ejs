@@ -21,7 +21,7 @@
         <% }) %>
     </select>
     <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; white-space:nowrap;">
-        <input type="checkbox" name="is_weekly" id="edit_is_weekly_<%= item.id %>" <%= item.is_weekly ? 'checked' : '' %> onchange="document.getElementById('edit_weekday_<%= item.id %>').style.display = this.checked ? 'inline-block' : 'none';"> أسبوعي
+        <input type="checkbox" name="is_weekly" id="edit_is_weekly_<%= item.id %>" <%= item.is_weekly ? 'checked' : '' %> onchange="this.form.querySelector('select[name=weekly_weekday]').style.display = this.checked ? 'inline-block' : 'none';"> أسبوعي
     </label>
     <select name="weekly_weekday" id="edit_weekday_<%= item.id %>" style="<%= item.is_weekly ? '' : 'display:none;' %>">
         <% weekdayNames.forEach(function(name, idx) { %>

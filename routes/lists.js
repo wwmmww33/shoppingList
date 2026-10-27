@@ -157,7 +157,7 @@ const classifyItemCategoryWithAI = async (name, categories) => {
 // Loaded fresh per request (not cached in memory) so a category someone just
 // added shows up immediately for everyone, including in the same request that
 // created it (e.g. after /categories redirects back here).
-const loadItemCategories = () => all('SELECT * FROM item_categories ORDER BY id ASC');
+const loadItemCategories = () => all('SELECT * FROM item_categories ORDER BY sort_order ASC, id ASC');
 
 const generateCategoryKey = () => 'custom_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 
@@ -332,7 +332,12 @@ const loadItemsForList = async (listId, { isOwner, cancelledSort, categories, hi
   if (storeFilter) active = active.filter((i) => i.planned_store_id === storeFilter);
   const bought = items.filter((i) => i.status === 'bought');
   const cancelled = items.filter((i) => i.status === 'cancelled');
-  const archived = bought.concat(cancelled).sort(secondarySort);
+  // The archive drawer also lists every active item (marked "في القائمة"),
+  // so restoring an item leaves it in place, highlighted, instead of making
+  // it vanish — and anyone browsing it can see what's already on the list.
+  // Unfiltered by the active list's hidden/store filters on purpose.
+  const allActive = items.filter((i) => i.status === 'active');
+  const archived = bought.concat(cancelled, allActive).sort(secondarySort);
 
   return { active, archived };
 };
@@ -431,16 +436,6 @@ const localRedirectTarget = (target, fallback) =>
 
 router.get('/', async (req, res) => {
   const itemCategories = await loadItemCategories();
-  const ownedLists = await all('SELECT * FROM lists WHERE owner_id = ? ORDER BY created_at DESC', [req.user.id]);
-  const sharedLists = await all(
-    `SELECT l.*, u.name AS owner_name
-     FROM lists l
-     JOIN list_shares s ON s.list_id = l.id
-     JOIN users u ON u.id = l.owner_id
-     WHERE s.user_id = ?
-     ORDER BY l.created_at DESC`,
-    [req.user.id]
-  );
 
   let pinnedList = null;
   let pinnedItems = null;
@@ -473,8 +468,6 @@ router.get('/', async (req, res) => {
   const knownItemNames = pinnedList ? await loadKnownItemNames(req.user.id) : [];
 
   res.render('dashboard', {
-    ownedLists,
-    sharedLists,
     pinnedList,
     pinnedItems,
     pinnedIsOwner,
@@ -646,7 +639,7 @@ router.post('/categories', async (req, res) => {
   const color = /^#[0-9a-fA-F]{6}$/.test(req.body.color || '') ? req.body.color : null;
   if (!label) return res.redirect(req.body.redirect_to || '/');
   const existingCount = (await get('SELECT COUNT(*) AS c FROM item_categories')).c;
-  await run('INSERT INTO item_categories (key, label, icon, color, created_by) VALUES (?, ?, ?, ?, ?)', [
+  await run('INSERT INTO item_categories (key, label, icon, color, created_by, sort_order) VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM item_categories))', [
     generateCategoryKey(),
     label,
     icon,
@@ -675,6 +668,31 @@ router.post('/categories/:id/edit', async (req, res) => {
     await run('UPDATE item_categories SET label = ?, icon = ?, color = ? WHERE id = ?', [label, icon, color, categoryId]);
   }
   res.redirect(req.body.redirect_to || '/account');
+});
+
+// Drag-and-drop reorder from the account page: body { ids: [...] } is the
+// full category list in its new order. Categories are shared by everyone,
+// so this sets the order everywhere they're grouped (lists, archive drawer).
+router.post('/categories/reorder', async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+  const existing = await all('SELECT id FROM item_categories');
+  const known = new Set(existing.map((c) => c.id));
+  // Only accept a complete permutation of the current categories, so a stale
+  // page (a category added/deleted meanwhile) can't scramble the order.
+  if (ids.length !== known.size || new Set(ids).size !== ids.length || !ids.every((id) => known.has(id))) {
+    return res.status(409).json({ ok: false });
+  }
+  await run('BEGIN');
+  try {
+    for (let i = 0; i < ids.length; i++) {
+      await run('UPDATE item_categories SET sort_order = ? WHERE id = ?', [i + 1, ids[i]]);
+    }
+    await run('COMMIT');
+  } catch (err) {
+    await run('ROLLBACK');
+    throw err;
+  }
+  res.json({ ok: true });
 });
 
 // Same idea as the per-list suggestion below, but scanning every list this
@@ -736,7 +754,7 @@ router.post('/categories/apply-suggestion', async (req, res) => {
 
   const existingCount = (await get('SELECT COUNT(*) AS c FROM item_categories')).c;
   const key = generateCategoryKey();
-  await run('INSERT INTO item_categories (key, label, icon, color, created_by) VALUES (?, ?, ?, ?, ?)', [
+  await run('INSERT INTO item_categories (key, label, icon, color, created_by, sort_order) VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM item_categories))', [
     key,
     label,
     icon,
@@ -775,7 +793,7 @@ router.post('/lists/:id/categories/apply-suggestion', requireListAccess, async (
 
   const existingCount = (await get('SELECT COUNT(*) AS c FROM item_categories')).c;
   const key = generateCategoryKey();
-  await run('INSERT INTO item_categories (key, label, icon, color, created_by) VALUES (?, ?, ?, ?, ?)', [
+  await run('INSERT INTO item_categories (key, label, icon, color, created_by, sort_order) VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM item_categories))', [
     key,
     label,
     icon,
@@ -867,6 +885,25 @@ router.post('/items/:itemId/reopen', async (req, res) => {
   redirectBackTo(req, res, ctx.item.list_id);
 });
 
+// "تراجع" on an archive-drawer row marked "في القائمة": takes the item back
+// off the active list. The client sends the status the row had right before
+// it was restored (prev_status); without one (e.g. the page was refreshed
+// since), it falls back to "bought" if the item was ever bought, otherwise
+// "cancelled".
+router.post('/items/:itemId/unrestore', async (req, res) => {
+  const ctx = await getItemWithAccess(req);
+  if (!ctx) return res.status(404).send('غير موجود');
+  if (ctx.item.status === 'active') {
+    let status = ['bought', 'cancelled'].includes(req.body.prev_status) ? req.body.prev_status : null;
+    if (!status) {
+      const bought = await get('SELECT 1 FROM item_purchases WHERE item_id = ? LIMIT 1', [ctx.item.id]);
+      status = bought ? 'bought' : 'cancelled';
+    }
+    await run('UPDATE list_items SET status = ? WHERE id = ?', [status, ctx.item.id]);
+  }
+  redirectBackTo(req, res, ctx.item.list_id);
+});
+
 router.post('/items/:itemId/toggle-hidden', async (req, res) => {
   const ctx = await getItemWithAccess(req);
   if (!ctx) return res.status(404).send('غير موجود');
@@ -947,17 +984,20 @@ router.post('/items/:itemId/delete', async (req, res) => {
 router.get('/items/:itemId/history', async (req, res) => {
   const ctx = await getItemWithAccess(req);
   if (!ctx) return res.status(404).send('غير موجود');
+  // Newest first by default; ?order=asc flips it (the cheapest purchase is
+  // still highlighted in the view, whatever the order).
+  const order = req.query.order === 'asc' ? 'asc' : 'desc';
   const purchases = await all(
     `SELECT p.*, s.name AS store_name, u.name AS buyer_name
      FROM item_purchases p
      LEFT JOIN stores s ON s.id = p.store_id
      LEFT JOIN users u ON u.id = p.bought_by
      WHERE p.item_id = ?
-     ORDER BY p.price IS NULL, p.price ASC, p.bought_at DESC`,
+     ORDER BY p.bought_at ${order === 'asc' ? 'ASC' : 'DESC'}, p.id ${order === 'asc' ? 'ASC' : 'DESC'}`,
     [ctx.item.id]
   );
   const stores = await all('SELECT * FROM stores ORDER BY name ASC');
-  res.render('item-history', { item: ctx.item, list: ctx.list, purchases, stores });
+  res.render('item-history', { item: ctx.item, list: ctx.list, purchases, stores, order });
 });
 
 // Looks up a purchase plus its item, only if the current user owns or is

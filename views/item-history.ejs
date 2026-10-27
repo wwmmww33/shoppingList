@@ -12,7 +12,12 @@
     <div class="container">
         <div class="card">
             <a href="/lists/<%= list.id %>">&larr; رجوع للقائمة</a>
-            <h2 style="margin:10px 0 0;">سجل شراء: <%= item.name %></h2>
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-top:10px;">
+                <h2 style="margin:0;">سجل شراء: <%= item.name %></h2>
+                <a href="/items/<%= item.id %>/history<%= order === 'desc' ? '?order=asc' : '' %>" class="btn btn-outline btn-sm" title="عكس الترتيب">
+                    <i data-lucide="arrow-up-down" class="lucide"></i> <%= order === 'desc' ? 'الأحدث أولًا' : 'الأقدم أولًا' %>
+                </a>
+            </div>
         </div>
 
         <div class="card">
@@ -32,6 +37,7 @@
                             <th>التاريخ</th>
                             <th>المحل</th>
                             <th>البراند</th>
+                            <th>التفاصيل</th>
                             <th>سعر الوحدة</th>
                             <th>الكمية</th>
                             <th>الإجمالي</th>
@@ -41,22 +47,24 @@
                     </thead>
                     <tbody>
                         <% purchases.forEach(function(p) { %>
+                            <%# data-label: the column name, shown beside each value when
+                                the table collapses into one card per purchase on phones. %>
                             <tr class="<%= p.id === cheapestId ? 'best' : '' %>">
-                                <td>
+                                <td data-label="التاريخ">
                                     <%= String(p.bought_at).slice(0, 10).split('-').reverse().join('-') %>
-                                    <div style="font-size:0.75rem; color: var(--text-muted);"><%= String(p.bought_at).slice(11, 16) %></div>
+                                    <div class="history-sub"><%= String(p.bought_at).slice(11, 16) %></div>
                                 </td>
-                                <td><%= p.store_name || '-' %></td>
-                                <td>
+                                <td data-label="المحل"><%= p.store_name || '-' %></td>
+                                <td data-label="البراند">
                                     <% if (p.brand_image) { %><img src="<%= p.brand_image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="openImageLightbox(this.src)"><% } %>
                                     <%= p.brand || '-' %>
-                                    <% if (p.brand_detail) { %><div style="font-size:0.75rem; color: var(--text-muted);"><%= p.brand_detail %></div><% } %>
                                 </td>
-                                <td><%= p.price !== null ? Number(p.price).toFixed(3) : '-' %></td>
-                                <td><%= p.purchased_qty !== null ? p.purchased_qty : '1 (افتراضي)' %></td>
-                                <td><%= p.price !== null ? (Number(p.price) * (p.purchased_qty !== null ? p.purchased_qty : 1)).toFixed(3) : '-' %></td>
-                                <td><%= p.buyer_name || 'مستخدم سابق' %></td>
-                                <td>
+                                <td data-label="التفاصيل"><%= p.brand_detail || '-' %></td>
+                                <td data-label="سعر الوحدة"><%= p.price !== null ? Number(p.price).toFixed(3) : '-' %></td>
+                                <td data-label="الكمية"><%= p.purchased_qty !== null ? p.purchased_qty : '1 (افتراضي)' %></td>
+                                <td data-label="الإجمالي"><%= p.price !== null ? (Number(p.price) * (p.purchased_qty !== null ? p.purchased_qty : 1)).toFixed(3) : '-' %></td>
+                                <td data-label="بواسطة"><%= p.buyer_name || 'مستخدم سابق' %></td>
+                                <td class="history-actions">
                                     <button type="button" class="icon-btn" title="تعديل"
                                         onclick="openEditPurchaseModal(<%= JSON.stringify({ id: p.id, storeId: p.store_id || '', brand: p.brand || '', detail: p.brand_detail || '', price: p.price !== null ? p.price : '', qty: p.purchased_qty !== null ? p.purchased_qty : '', date: String(p.bought_at || '').slice(0, 10), time: String(p.bought_at || '').slice(11, 16), image: p.brand_image || '' }) %>)">
                                         <i data-lucide="pencil" class="lucide"></i>
@@ -73,6 +81,6 @@
         </div>
     </div>
 
-    <%- include('partials/purchase-edit-modal', { stores: stores, redirectTo: '/items/' + item.id + '/history' }) %>
+    <%- include('partials/purchase-edit-modal', { stores: stores, redirectTo: '/items/' + item.id + '/history' + (order === 'asc' ? '?order=asc' : '') }) %>
 </body>
 </html>

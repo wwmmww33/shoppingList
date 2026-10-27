@@ -13,7 +13,9 @@ Set-Location $PSScriptRoot
 $stamp = Get-Date -Format 'yyyyMMdd-HHmm'
 $zipPath = Join-Path (Split-Path $PSScriptRoot -Parent) "shoppingList-release-$stamp.zip"
 
-$files = git ls-files --cached --others --exclude-standard | Where-Object { $_ -and (Test-Path $_ -PathType Leaf) } | Sort-Object -Unique
+# *.sqlite is excluded explicitly too: database copies like "data (1).sqlite"
+# aren't covered by .gitignore and must never be unpacked over the server.
+$files = git ls-files --cached --others --exclude-standard | Where-Object { $_ -and ($_ -notlike '*.sqlite') -and (Test-Path $_ -PathType Leaf) } | Sort-Object -Unique
 
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem

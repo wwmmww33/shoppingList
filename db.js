@@ -135,6 +135,24 @@ const init = async () => {
       await run('INSERT INTO item_categories (key, label, icon, color) VALUES (?, ?, ?, ?)', [cat.key, cat.label, cat.icon, cat.color]);
     }
   }
+  // Display order of categories (drag-and-drop on the account page). Rows
+  // from before this column existed keep their old order (by id).
+  await safeAlter('ALTER TABLE item_categories ADD COLUMN sort_order INTEGER');
+  await run('UPDATE item_categories SET sort_order = id WHERE sort_order IS NULL');
+
+  // One-time icon/color for custom categories created back when no fitting
+  // icon was offered (they all got the default "package" in the same green).
+  // Only touches a category still on that default, so a hand-picked icon is
+  // never overwritten; a no-op once applied or on a DB without them.
+  const CUSTOM_CATEGORY_ICON_FIXES = [
+    { label: 'منتجات العناية بالسيارة', icon: 'car', color: '#3949ab' },
+    { label: 'مواد بناء وتشييد', icon: 'hammer', color: '#f4511e' },
+    { label: 'منتجات زراعية', icon: 'sprout', color: '#7cb342' },
+    { label: 'مستلزمات شخصية', icon: 'shirt', color: '#8e24aa' },
+  ];
+  for (const fix of CUSTOM_CATEGORY_ICON_FIXES) {
+    await run("UPDATE item_categories SET icon = ?, color = ? WHERE label = ? AND icon = 'package'", [fix.icon, fix.color, fix.label]);
+  }
 };
 
 module.exports = { db, run, get, all, init };

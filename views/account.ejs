@@ -6,6 +6,7 @@
     <title>حسابي والإعدادات - قوائمنا</title>
     <link rel="stylesheet" href="/style.css">
     <%- include('partials/theme-init') %>
+    <script src="/vendor/sortable-1.15.2.min.js"></script>
 </head>
 <body>
     <%- include('partials/nav') %>
@@ -41,21 +42,39 @@
         <div class="card">
             <h3 style="margin-top:0;">تصنيفات الأغراض</h3>
             <p style="font-size:0.85rem; color: var(--text-muted); margin-top:-6px;">عدّل اسم أي تصنيف أو أيقونته أو لونه، أو احذفه (تعود أغراضه إلى "بدون تصنيف"). هذا يشمل التصنيفات الأساسية أيضًا.</p>
+            <p style="font-size:0.85rem; color: var(--text-muted);"><i data-lucide="grip-vertical" class="lucide"></i> اسحب أي تصنيف من المقبض لتغيير ترتيبه — هذا هو ترتيب ظهور التصنيفات في القوائم وفي "المشتراة والملغاة". يُحفظ تلقائيًا. <span id="category-order-status" class="category-order-status"></span></p>
+            <div id="category-sort-list">
+            <%# One compact line per category (handle · icon · name · edit · delete);
+                the edit fields open below it only when ✏ is tapped. %>
             <% itemCategories.forEach(function(c) { %>
-                <form method="POST" action="/categories/<%= c.id %>/edit" class="inline-form" style="margin-bottom:8px;">
-                    <input type="hidden" name="redirect_to" value="/account">
-                    <i data-lucide="<%= c.icon %>" class="lucide cat-icon-preview" style="color:<%= c.color %>; flex:0 0 auto;"></i>
-                    <input type="text" name="label" value="<%= c.label %>" required class="flex-2">
-                    <select name="icon" class="flex-1" onchange="this.previousElementSibling.setAttribute('data-lucide', this.value); if (window.renderIcons) renderIcons();">
-                        <% customCategoryIcons.forEach(function(ic) { %>
-                            <option value="<%= ic %>" <%= c.icon === ic ? 'selected' : '' %>><%= ic %></option>
-                        <% }) %>
-                    </select>
-                    <input type="color" name="color" value="<%= c.color %>" title="لون التصنيف" style="flex:0 0 auto; width:44px; padding:2px; border:1px solid var(--border); border-radius:6px;">
-                    <button type="submit" class="btn btn-success btn-sm">حفظ</button>
-                    <button type="submit" formaction="/categories/<%= c.id %>/delete" class="btn btn-danger btn-sm" onclick="return confirm('حذف هذا التصنيف؟ ستصبح أغراضه بدون تصنيف.');">حذف</button>
-                </form>
+                <div class="category-sort-row" data-id="<%= c.id %>">
+                    <div class="category-row-main">
+                        <span class="drag-handle" title="اسحب لتغيير الترتيب"><i data-lucide="grip-vertical" class="lucide"></i></span>
+                        <i data-lucide="<%= c.icon %>" class="lucide" style="color:<%= c.color %>; flex:0 0 auto;"></i>
+                        <span class="category-row-label"><%= c.label %></span>
+                        <button type="button" class="icon-btn" title="تعديل" onclick="this.closest('.category-sort-row').classList.toggle('open')"><i data-lucide="pencil" class="lucide"></i></button>
+                        <form method="POST" action="/categories/<%= c.id %>/delete" onsubmit="return confirm('حذف هذا التصنيف؟ ستصبح أغراضه بدون تصنيف.');">
+                            <input type="hidden" name="redirect_to" value="/account">
+                            <button type="submit" class="icon-btn icon-btn-danger" title="حذف"><i data-lucide="trash-2" class="lucide"></i></button>
+                        </form>
+                    </div>
+                    <form method="POST" action="/categories/<%= c.id %>/edit" class="inline-form category-edit-form">
+                        <input type="hidden" name="redirect_to" value="/account">
+                        <input type="text" name="label" value="<%= c.label %>" required class="flex-2">
+                        <div class="form-row">
+                            <i data-lucide="<%= c.icon %>" class="lucide cat-icon-preview" style="color:<%= c.color %>; flex:0 0 auto; align-self:center;"></i>
+                            <select name="icon" class="flex-1" onchange="var p = this.parentElement.querySelector('.cat-icon-preview'); p.setAttribute('data-lucide', this.value); if (window.renderIcons) renderIcons();">
+                                <% customCategoryIcons.forEach(function(ic) { %>
+                                    <option value="<%= ic %>" <%= c.icon === ic ? 'selected' : '' %>><%= ic %></option>
+                                <% }) %>
+                            </select>
+                            <input type="color" name="color" value="<%= c.color %>" title="لون التصنيف" style="flex:0 0 auto; width:44px; padding:2px; border:1px solid var(--border); border-radius:6px;">
+                            <button type="submit" class="btn btn-success btn-sm">حفظ</button>
+                        </div>
+                    </form>
+                </div>
             <% }) %>
+            </div>
 
             <hr style="border:none; border-top:1px dashed var(--border); margin:16px 0 12px;">
             <h4 style="margin:0 0 8px;">تصنيف جديد</h4>
@@ -130,6 +149,44 @@
                 })
                 .catch(function() {});
         }
+
+        // Drag-and-drop category order (by the grip handle only, so the
+        // name/icon/color fields stay normal to tap and type in). Saved on
+        // every drop; a failed save reloads so the page shows the real order.
+        (function() {
+            var listEl = document.getElementById('category-sort-list');
+            var statusEl = document.getElementById('category-order-status');
+            if (!listEl || !window.Sortable) return;
+            var statusTimer = null;
+            function showStatus(text, isError) {
+                statusEl.textContent = text;
+                statusEl.classList.toggle('error', !!isError);
+                clearTimeout(statusTimer);
+                if (!isError) statusTimer = setTimeout(function() { statusEl.textContent = ''; }, 2500);
+            }
+            Sortable.create(listEl, {
+                handle: '.drag-handle',
+                draggable: '.category-sort-row',
+                animation: 150,
+                ghostClass: 'category-sort-ghost',
+                onEnd: function(evt) {
+                    if (evt.oldIndex === evt.newIndex) return;
+                    var ids = Array.from(listEl.querySelectorAll('.category-sort-row')).map(function(row) { return Number(row.getAttribute('data-id')); });
+                    showStatus('جارٍ الحفظ...');
+                    fetch('/categories/reorder', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids: ids }),
+                    })
+                        .then(function(res) { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+                        .then(function() { showStatus('✓ تم حفظ الترتيب'); })
+                        .catch(function() {
+                            showStatus('تعذّر حفظ الترتيب — سيتم تحديث الصفحة', true);
+                            setTimeout(function() { window.location.reload(); }, 1500);
+                        });
+                },
+            });
+        })();
     </script>
 </body>
 </html>

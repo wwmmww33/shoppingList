@@ -112,6 +112,59 @@ input[type="text"], input[type="email"], input[type="password"], input[type="num
 .btn:hover { background: var(--primary-dark); }
 .btn.btn-success { background: var(--success); }
 .btn.btn-success:hover { background: var(--success-dark); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Account page: drag-and-drop category order (SortableJS, handle-only).
+   Each category is one compact line; its edit fields open below on ✏. */
+.category-sort-row {
+  margin-bottom: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+.category-row-main { display: flex; align-items: center; gap: 6px; min-height: 40px; }
+.category-row-main form { display: inline-flex; }
+.category-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+/* Scoped under the row to out-specify the later .inline-form { display:flex }. */
+.category-sort-row .category-edit-form { display: none; padding: 4px 0 8px; }
+.category-sort-row.open .category-edit-form { display: flex; }
+.category-sort-row.open { border-color: var(--primary); }
+.icon-btn.icon-btn-danger { color: var(--danger); }
+.drag-handle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 38px;
+  color: var(--text-muted);
+  cursor: grab;
+  touch-action: none;
+}
+.drag-handle:active { cursor: grabbing; }
+.category-sort-ghost { opacity: 0.4; border-style: dashed; border-color: var(--primary); }
+.category-order-status { font-weight: 600; color: var(--success); }
+.category-order-status.error { color: var(--danger); }
+
+/* "حذف القائمة" section inside the list settings modal, set apart from the
+   everyday settings above it. */
+.danger-zone {
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  background: var(--error-bg);
+}
+.danger-zone h4 { margin: 0 0 6px; color: var(--danger); display: flex; align-items: center; gap: 6px; }
+.danger-zone p { margin: 0 0 10px; font-size: 0.85rem; color: var(--text-muted); }
 .btn.btn-danger { background: var(--danger); }
 .btn.btn-outline { background: var(--card); color: var(--text); border: 1px solid var(--border); }
 .btn.btn-outline:hover { background: var(--hover-bg); }
@@ -174,6 +227,62 @@ input[type="text"], input[type="email"], input[type="password"], input[type="num
   animation: itemActionFlash 0.26s ease forwards;
   pointer-events: none;
 }
+/* Optimistic actions (buy/cancel/delete/move): the row leaves the list
+   immediately while the server request runs in the background. */
+.item-row.optimistic-hidden { display: none; }
+/* Archive drawer row whose item is on the active list (just restored, or
+   already there): stays in place, highlighted, instead of disappearing. */
+.in-active-badge { display: none; }
+.item-row.in-active-list {
+  opacity: 1;
+  border-style: solid;
+  border-color: var(--success);
+  background: var(--success-bg);
+}
+.item-row.in-active-list .in-active-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--success);
+  white-space: nowrap;
+}
+/* While a restore is still in flight the row keeps its bought/cancelled
+   class; #archive-drawer gives this specificity over the later
+   .item-row.cancelled rule. */
+#archive-drawer .item-row.in-active-list .item-name { text-decoration: none; }
+/* A picked row is reduced to just the name and its "تراجع" button: the
+   last-purchase details, the action icons and any open panel are hidden
+   (all still rendered, so they're back the moment "تراجع" is tapped). */
+#archive-drawer .item-row.in-active-list .item-sub,
+#archive-drawer .item-row.in-active-list .item-icons,
+#archive-drawer .item-row.in-active-list .edit-panel,
+#archive-drawer .item-row.in-active-list .move-panel { display: none !important; }
+/* (display set here, not inline, so the in-active-list rule can hide it) */
+.reopen-form { display: inline; }
+.item-row.in-active-list .reopen-form { display: none; }
+/* Big, clearly visible "تراجع" on rows marked "في القائمة" — takes the item
+   back off the active list. Only shown in that state (see .reopen-form). */
+.unrestore-form { display: none; margin-inline-start: auto; }
+.item-row.in-active-list .unrestore-form { display: inline-flex; }
+.unrestore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 38px;
+  padding: 7px 14px;
+  border: 1.5px solid var(--danger);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--danger);
+  font-size: 0.92rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.unrestore-btn:hover, .unrestore-btn:active { background: var(--danger); color: #fff; }
 @keyframes itemActionFlash {
   0% { transform: scale(1); background: var(--card); border-color: var(--border); }
   40% { transform: scale(0.98); background: var(--success-bg); border-color: var(--success); }
@@ -466,6 +575,43 @@ input[type="text"], input[type="email"], input[type="password"], input[type="num
 table.history-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 table.history-table th, table.history-table td { padding: 8px; text-align: center; border-bottom: 1px solid var(--border); }
 table.history-table tr.best td { background: var(--success-bg); font-weight: bold; }
+.history-sub { font-size: 0.75rem; color: var(--text-muted); font-weight: normal; }
+table.history-table td[data-label="التاريخ"] { white-space: nowrap; }
+/* Phones: 8 columns can't fit, so each purchase becomes a card with one
+   "label — value" line per column (labels come from each cell's data-label). */
+@media (max-width: 640px) {
+  table.history-table, table.history-table tbody, table.history-table tr, table.history-table td { display: block; width: 100%; }
+  table.history-table thead { display: none; }
+  table.history-table tr {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 4px 12px;
+    margin-bottom: 10px;
+    background: var(--card);
+  }
+  table.history-table tr.best { background: var(--success-bg); border-color: var(--success); }
+  table.history-table tr.best td { background: transparent; }
+  table.history-table td {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 7px 0;
+    text-align: start;
+    border-bottom: 1px dashed var(--border);
+  }
+  table.history-table td:last-child { border-bottom: none; }
+  /* Label on the start side; margin pushes the value(s) to the far end. */
+  table.history-table td::before {
+    content: attr(data-label);
+    margin-inline-end: auto;
+    font-size: 0.8rem;
+    font-weight: normal;
+    color: var(--text-muted);
+  }
+  table.history-table td.history-actions { justify-content: flex-end; padding: 2px 0; }
+  table.history-table td.history-actions::before { content: none; }
+}
 
 .inline-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 /* Relative widths within an inline-form/panel row (e.g. a name field wider
@@ -551,6 +697,10 @@ table.history-table tr.best td { background: var(--success-bg); font-weight: bol
 .archive-drawer {
   right: auto;
   left: 0;
+  /* Wider than the nav drawer: it's a browsable list of item rows with
+     several action icons each, not just a few links. */
+  width: 560px;
+  max-width: 95vw;
   border-left: none;
   border-right: 1px solid var(--border);
   box-shadow: 4px 0 16px rgba(0,0,0,0.15);
