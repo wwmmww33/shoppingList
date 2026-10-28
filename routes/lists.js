@@ -9,6 +9,7 @@ const { requireListAccess } = require('../middleware/listAccess');
 const { nextWeekdayAfter, todayDateOnlyString, WEEKDAY_NAMES_AR, nowOmanString, formatDateArabic } = require('../utils/dates');
 const { STORE_CATEGORIES, itemCategoryOrder, itemCategoryMapFrom, CUSTOM_CATEGORY_ICONS, nextCategoryColor } = require('../utils/categories');
 const { UNITS } = require('../utils/units');
+const { askAI, getAIProvider } = require('../utils/ai');
 
 const router = express.Router();
 
@@ -46,58 +47,48 @@ const saveBrandImage = async (file) => {
   }
 };
 
-// Best-effort AI read of a brand photo's name/variant via DeepSeek's vision
-// model, offered purely as a pre-fill: the brand/detail fields stay plain
-// editable text, so the person can always correct or replace whatever this
-// suggests, or skip it and type everything manually.
+// A brand photo path the client carried over (e.g. from a past brand) —
+// only accepted if it's one of our own uploads that actually exists, never
+// trusted blindly. Returns the path or null.
+const validExistingBrandImage = (p) =>
+  typeof p === 'string' &&
+  /^\/uploads\/brands\/[A-Za-z0-9._-]+$/.test(p) &&
+  fs.existsSync(path.join(BRAND_UPLOAD_DIR, path.basename(p)))
+    ? p
+    : null;
+
+// Best-effort AI read of a brand photo's name/variant (via the configured AI
+// provider, see utils/ai.js), offered purely as a pre-fill: the brand/detail
+// fields stay plain editable text, so the person can always correct or
+// replace whatever this suggests, or skip it and type everything manually.
+// Sent much larger than the stored 200px thumbnail: at that size the small
+// print (size, weight, variant) is unreadable, so specs never came back.
+const BRAND_AI_MAX_DIM = 768;
 const analyzeBrandImageWithAI = async (file) => {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!file || !apiKey) return { brand: null, detail: null };
+  if (!file || !getAIProvider()) return { brand: null, detail: null };
   try {
     const image = await Jimp.read(file.buffer);
-    image.scaleToFit({ w: BRAND_THUMB_MAX_DIM, h: BRAND_THUMB_MAX_DIM });
-    const buffer = await image.getBuffer('image/jpeg', { quality: 70 });
-    const base64 = buffer.toString('base64');
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    let response;
-    try {
-      response = await fetch('https://api.deepseek.com/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: process.env.DEEPSEEK_VISION_MODEL || 'deepseek-v4-flash-vision-exp',
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text:
-                    'هذه صورة لمنتج أو بطاقة سعر من محل بقالة. استخرج اسم البراند/الماركة التجارية، ' +
-                    'وتفاصيل قصيرة إضافية إن وُجدت (مثل الحجم أو الوزن أو النوع). ' +
-                    'أجب فقط بصيغة JSON مضغوطة بدون أي نص آخر: {"brand": "...", "detail": "..."}. ' +
-                    'إذا تعذّر التعرف على البراند ضع null لكليهما.',
-                },
-                { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
-              ],
-            },
-          ],
-          max_tokens: 150,
-        }),
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-    if (!response.ok) return { brand: null, detail: null };
-    const data = await response.json();
-    const text = data?.choices?.[0]?.message?.content || '';
+    image.scaleToFit({ w: BRAND_AI_MAX_DIM, h: BRAND_AI_MAX_DIM });
+    const buffer = await image.getBuffer('image/jpeg', { quality: 80 });
+    const result = await askAI({
+      prompt:
+        'هذه صورة لمنتج أو بطاقة سعر من محل بقالة. استخرج:\n' +
+        '1) brand: اسم البراند/الماركة التجارية كما هو مكتوب.\n' +
+        '2) detail: مواصفات المنتج المكتوبة عليه باختصار — الحجم أو الوزن أو السعة (مثل 1 لتر، 500 جرام، 12 حبة) ' +
+        'والنوع أو النكهة (مثل قليل الدسم، بالفراولة) — بدون تكرار اسم البراند.\n' +
+        'كل واحد مستقل عن الآخر: إذا ظهرت المواصفات ولم يظهر البراند فأعد المواصفات، والعكس.\n' +
+        'أجب فقط بصيغة JSON مضغوطة بدون أي نص آخر: {"brand": "...", "detail": "..."}، وضع null لما لا يظهر.',
+      imageBase64: buffer.toString('base64'),
+      maxTokens: 200,
+      timeoutMs: 20000,
+    });
+    if (!result.ok) return { brand: null, detail: null };
+    const text = result.text;
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return { brand: null, detail: null };
     const parsed = JSON.parse(match[0]);
-    return { brand: parsed.brand || null, detail: parsed.detail || null };
+    const clean = (v) => (typeof v === 'string' && v.trim() && v.trim() !== 'null' ? v.trim().slice(0, 120) : null);
+    return { brand: clean(parsed.brand), detail: clean(parsed.detail) };
   } catch (err) {
     console.error('brand image AI analysis failed:', err.message);
     return { brand: null, detail: null };
@@ -108,49 +99,79 @@ const analyzeBrandImageWithAI = async (file) => {
 // a pre-fill only (see client-side: it never overwrites a category the
 // person already set, by hand or from a previous suggestion).
 const classifyItemCategoryWithAI = async (name, categories) => {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!name) return { category: null, reason: 'no_name' };
-  if (!apiKey) return { category: null, reason: 'no_api_key' };
+  const categoryList = categories.map((c) => `${c.key}: ${c.label}`).join('\n');
+  const result = await askAI({
+    prompt:
+      'صنّف اسم الغرض التالي ضمن إحدى هذه الفئات فقط. أجب برمز الفئة (key) فقط بدون أي نص إضافي، أو بكلمة none إذا لم تنطبق أي فئة بوضوح:\n' +
+      categoryList +
+      '\n\nاسم الغرض: ' +
+      name,
+    maxTokens: 20,
+    timeoutMs: 10000,
+  });
+  if (!result.ok) return { category: null, reason: result.reason };
+  // Keep digits: custom category keys look like "custom_mvoo003s_h2kah3"
+  // (stripping them made custom categories impossible to match).
+  const text = result.text.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+  const category = itemCategoryMapFrom(categories)[text] ? text : null;
+  return { category, reason: category ? null : 'no_match' };
+};
+
+// "إضافة غرض" from a photo: one AI call that names the item generically (the
+// kind of product — "حليب", not its brand), picks its category from the
+// existing ones and the unit it's usually bought in. Pre-fill only; every
+// field stays editable. The photo itself is not stored. Sent larger than
+// brand thumbnails since recognizing the product needs more detail than
+// reading a label.
+const ITEM_PHOTO_MAX_DIM = 512;
+const analyzeItemImageWithAI = async (file, categories) => {
+  const empty = { name: null, category: null, unit: null, details: null };
+  if (!file) return { ...empty, reason: 'no_image' };
+  if (!getAIProvider()) return { ...empty, reason: 'no_api_key' };
+  let base64;
   try {
-    const categoryList = categories.map((c) => `${c.key}: ${c.label}`).join('\n');
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    let response;
-    try {
-      response = await fetch('https://api.deepseek.com/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'deepseek-chat',
-          messages: [
-            {
-              role: 'user',
-              content:
-                'صنّف اسم الغرض التالي ضمن إحدى هذه الفئات فقط. أجب برمز الفئة (key) فقط بدون أي نص إضافي، أو بكلمة none إذا لم تنطبق أي فئة بوضوح:\n' +
-                categoryList +
-                '\n\nاسم الغرض: ' +
-                name,
-            },
-          ],
-          max_tokens: 20,
-        }),
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => '');
-      console.error('AI category classification failed: HTTP', response.status, errorBody.slice(0, 300));
-      return { category: null, reason: 'http_' + response.status };
-    }
-    const data = await response.json();
-    const text = (data?.choices?.[0]?.message?.content || '').trim().toLowerCase().replace(/[^a-z_]/g, '');
-    const category = itemCategoryMapFrom(categories)[text] ? text : null;
-    return { category, reason: category ? null : 'no_match' };
+    const image = await Jimp.read(file.buffer);
+    image.scaleToFit({ w: ITEM_PHOTO_MAX_DIM, h: ITEM_PHOTO_MAX_DIM });
+    base64 = (await image.getBuffer('image/jpeg', { quality: 75 })).toString('base64');
   } catch (err) {
-    console.error('AI category classification failed:', err.message);
-    return { category: null, reason: err.name === 'AbortError' ? 'timeout' : 'network_error' };
+    console.error('item photo processing failed:', err.message);
+    return { ...empty, reason: 'bad_image' };
+  }
+  const categoryList = categories.map((c) => `${c.key}: ${c.label}`).join('\n');
+  const unitList = UNITS.map((u) => `${u.key}: ${u.label}`).join('\n');
+  const result = await askAI({
+    prompt:
+      'هذه صورة غرض أريد إضافته لقائمة مشتريات منزلية. ' +
+      'ما هو الغرض؟ اكتب اسمه العام بالعربية كما يُكتب في قائمة مشتريات (نوع المنتج، مثل: حليب، أرز، صابون صحون) ' +
+      'وليس اسم الماركة أو الحجم. ثم اختر تصنيفه من هذه الفئات فقط (رمز الفئة key)، أو none إذا لم تنطبق أي فئة:\n' +
+      categoryList +
+      '\n\nواختر الوحدة التي يُشترى بها هذا الغرض عادةً من هذه الوحدات فقط (رمز الوحدة key)، أو none إذا لم تكن واضحة:\n' +
+      unitList +
+      '\n\nوأضف تفاصيل قصيرة إن ظهرت في الصورة بوضوح (النوع أو النكهة أو الحجم، مثل: قليل الدسم، 1 لتر، بالفراولة) ' +
+      'بدون اسم الماركة، أو null إذا لم تظهر.' +
+      '\n\nأجب فقط بصيغة JSON مضغوطة بدون أي نص آخر: {"name": "...", "category": "...", "unit": "...", "details": "..."}. ' +
+      'إذا لم تستطع التعرف على الغرض ضع null للاسم.',
+    imageBase64: base64,
+    maxTokens: 160,
+    timeoutMs: 20000,
+  });
+  if (!result.ok) return { ...empty, reason: result.reason };
+  try {
+    const match = result.text.match(/\{[\s\S]*\}/);
+    const parsed = match ? JSON.parse(match[0]) : {};
+    const name = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim().slice(0, 60) : null;
+    const catKey = String(parsed.category || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    const category = itemCategoryMapFrom(categories)[catKey] ? catKey : null;
+    const unitKey = String(parsed.unit || '').trim().toLowerCase();
+    const unit = UNITS.some((u) => u.key === unitKey) ? unitKey : null;
+    const details = typeof parsed.details === 'string' && parsed.details.trim() && parsed.details.trim() !== 'null'
+      ? parsed.details.trim().slice(0, 120)
+      : null;
+    return { name, category, unit, details, reason: name ? null : 'not_recognized' };
+  } catch (err) {
+    console.error('item photo AI reply unreadable:', err.message);
+    return { ...empty, reason: 'not_recognized' };
   }
 };
 
@@ -161,54 +182,31 @@ const loadItemCategories = () => all('SELECT * FROM item_categories ORDER BY sor
 
 const generateCategoryKey = () => 'custom_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 
-// Sends the uncategorized active items in a list to DeepSeek and asks it to
-// propose a small number of NEW categories (distinct from the ones that
+// Sends the uncategorized active items in a list to the AI provider and asks
+// it to propose a small number of NEW categories (distinct from the ones that
 // already exist) to group them under. Returns [] on any failure — this is a
 // convenience suggestion, never something the rest of the app depends on.
 const suggestCategoriesWithAI = async (itemNames, existingCategories) => {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey || itemNames.length === 0) return [];
+  if (!getAIProvider() || itemNames.length === 0) return [];
   try {
     const existingList = existingCategories.map((c) => c.label).join('، ') || 'لا يوجد';
     const iconList = CUSTOM_CATEGORY_ICONS.join(', ');
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    let response;
-    try {
-      response = await fetch('https://api.deepseek.com/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'deepseek-chat',
-          messages: [
-            {
-              role: 'user',
-              content:
-                'لدي الأغراض التالية بدون تصنيف في قائمة مشتريات منزلية:\n' +
-                itemNames.join('، ') +
-                '\n\nالتصنيفات الموجودة حاليًا (لا تقترح تصنيفات مشابهة لها): ' +
-                existingList +
-                '\n\nاقترح حتى 3 تصنيفات جديدة ومفيدة لتجميع بعض هذه الأغراض تحتها (تجاهل أي غرض لا يستحق تصنيفًا خاصًا به). ' +
-                'أجب فقط بـ JSON صالح على هذا الشكل بدون أي نص إضافي:\n' +
-                '[{"label": "اسم التصنيف بالعربية", "icon": "اسم أيقونة من هذه القائمة فقط: ' +
-                iconList +
-                '", "items": ["اسم الغرض كما ورد بالضبط", "..."]}]',
-            },
-          ],
-          max_tokens: 500,
-        }),
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => '');
-      console.error('AI category suggestion failed: HTTP', response.status, errorBody.slice(0, 300));
-      return [];
-    }
-    const data = await response.json();
-    let text = (data?.choices?.[0]?.message?.content || '').trim();
+    const result = await askAI({
+      prompt:
+        'لدي الأغراض التالية بدون تصنيف في قائمة مشتريات منزلية:\n' +
+        itemNames.join('، ') +
+        '\n\nالتصنيفات الموجودة حاليًا (لا تقترح تصنيفات مشابهة لها): ' +
+        existingList +
+        '\n\nاقترح حتى 3 تصنيفات جديدة ومفيدة لتجميع بعض هذه الأغراض تحتها (تجاهل أي غرض لا يستحق تصنيفًا خاصًا به). ' +
+        'أجب فقط بـ JSON صالح على هذا الشكل بدون أي نص إضافي:\n' +
+        '[{"label": "اسم التصنيف بالعربية", "icon": "اسم أيقونة من هذه القائمة فقط: ' +
+        iconList +
+        '", "items": ["اسم الغرض كما ورد بالضبط", "..."]}]',
+      maxTokens: 500,
+      timeoutMs: 15000,
+    });
+    if (!result.ok) return [];
+    let text = result.text.trim();
     text = text.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```$/, '').trim();
     const parsed = JSON.parse(text);
     if (!Array.isArray(parsed)) return [];
@@ -580,7 +578,9 @@ router.post('/lists/:id/unshare', requireListAccess, async (req, res) => {
 
 // --- Items ---
 
-router.post('/lists/:id/items', requireListAccess, async (req, res) => {
+// Multipart only when a specified-brand photo is attached (field "brand_image");
+// otherwise a plain urlencoded form, which the multer step just passes through.
+router.post('/lists/:id/items', requireListAccess, uploadBrandImage, async (req, res) => {
   const name = (req.body.name || '').trim();
   if (!name) return res.redirect(`/lists/${req.list.id}`);
   const quantity = (req.body.quantity || '').trim() || null;
@@ -589,13 +589,25 @@ router.post('/lists/:id/items', requireListAccess, async (req, res) => {
   const isWeekly = req.body.is_weekly === 'on' ? 1 : 0;
   const weekday = isWeekly && req.body.weekly_weekday !== '' ? Number(req.body.weekly_weekday) : null;
   const plannedStoreId = req.body.planned_store_id ? Number(req.body.planned_store_id) : null;
+  const details = (req.body.details || '').trim().slice(0, 120) || null;
+  const planned = readPlannedBrand(req.body);
+  // The photo only matters when a brand was actually specified.
+  const plannedImage = planned.brand || planned.detail ? await saveBrandImage(req.file) : null;
 
   await run(
-    'INSERT INTO list_items (list_id, name, quantity, unit, category, is_weekly, weekly_weekday, planned_store_id, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [req.list.id, name, quantity, unit, category, isWeekly, weekday, plannedStoreId, req.user.id]
+    'INSERT INTO list_items (list_id, name, quantity, unit, category, is_weekly, weekly_weekday, planned_store_id, details, planned_brand, planned_brand_detail, planned_brand_image, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [req.list.id, name, quantity, unit, category, isWeekly, weekday, plannedStoreId, details, planned.brand, planned.detail, plannedImage, req.user.id]
   );
   res.redirect(req.body.redirect_to || `/lists/${req.list.id}`);
 });
+
+// The "specified brand" fields shared by the add-item and edit-item forms.
+function readPlannedBrand(body) {
+  return {
+    brand: (body.planned_brand || '').trim().slice(0, 80) || null,
+    detail: (body.planned_brand_detail || '').trim().slice(0, 120) || null,
+  };
+}
 
 const getItemWithAccess = async (req) => {
   const item = await get('SELECT * FROM list_items WHERE id = ?', [Number(req.params.itemId)]);
@@ -629,6 +641,13 @@ router.post('/items/classify-category', async (req, res) => {
   const categories = await loadItemCategories();
   const result = await classifyItemCategoryWithAI(name, categories);
   res.json(result);
+});
+
+// Photo in the "إضافة غرض" modal -> suggested item name + category (JSON).
+// Reuses the brand-photo upload middleware (field "brand_image").
+router.post('/items/analyze-image', uploadBrandImage, async (req, res) => {
+  const categories = await loadItemCategories();
+  res.json(await analyzeItemImageWithAI(req.file, categories));
 });
 
 // Manually add a custom item category. The key is an internal id, never
@@ -814,27 +833,16 @@ router.post('/items/:itemId/buy', uploadBrandImage, async (req, res) => {
   const { item } = ctx;
 
   const storeId = req.body.store_id ? Number(req.body.store_id) : null;
-  // brand_select is a flag ("__custom__" from both the new-brand modal and the
-  // one-tap past-brand buttons; empty from a plain buy) — the brand name
-  // actually saved always comes from brand_custom. A past purchase that only
-  // ever had a detail/size noted, with no separate brand name, still works as
-  // a reusable one-tap "profile".
+  // brand_select is a flag ("__custom__" from the brand modal, whether opened
+  // blank or pre-filled from a past brand; empty from a plain buy) — the
+  // brand name actually saved always comes from brand_custom. A past purchase
+  // that only ever had a detail/size noted, with no separate brand name,
+  // still works as a reusable "profile".
   const brand = (req.body.brand_select || '').trim() ? (req.body.brand_custom || '').trim() || null : null;
   const brandDetail = (req.body.brand_detail || '').trim() || null;
   // No new photo picked? Fall back to whichever existing thumbnail the client
-  // carried over from selecting a past brand (validated against our own
-  // upload path pattern + actual file presence, never trusted blindly).
-  let brandImage = await saveBrandImage(req.file);
-  if (!brandImage) {
-    const existing = req.body.existing_brand_image;
-    if (
-      typeof existing === 'string' &&
-      /^\/uploads\/brands\/[A-Za-z0-9._-]+$/.test(existing) &&
-      fs.existsSync(path.join(BRAND_UPLOAD_DIR, path.basename(existing)))
-    ) {
-      brandImage = existing;
-    }
-  }
+  // carried over from selecting a past brand.
+  const brandImage = (await saveBrandImage(req.file)) || validExistingBrandImage(req.body.existing_brand_image);
   const priceRaw = (req.body.price || '').trim();
   // Rounded to 3 decimals server-side too, since the AJAX item-action handler
   // submits via fetch and bypasses the input's native step-based validation.
@@ -947,13 +955,14 @@ router.post('/items/:itemId/copy', async (req, res) => {
   // exactly where it was, untouched.
   const { item } = ctx;
   await run(
-    'INSERT INTO list_items (list_id, name, quantity, unit, category, is_weekly, weekly_weekday, planned_store_id, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [targetListId, item.name, item.quantity, item.unit, item.category, item.is_weekly, item.weekly_weekday, item.planned_store_id, req.user.id]
+    'INSERT INTO list_items (list_id, name, quantity, unit, category, is_weekly, weekly_weekday, planned_store_id, details, planned_brand, planned_brand_detail, planned_brand_image, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [targetListId, item.name, item.quantity, item.unit, item.category, item.is_weekly, item.weekly_weekday, item.planned_store_id, item.details, item.planned_brand, item.planned_brand_detail, item.planned_brand_image, req.user.id]
   );
   redirectBackTo(req, res, ctx.item.list_id);
 });
 
-router.post('/items/:itemId/edit', async (req, res) => {
+// Multipart when a new specified-brand photo is attached (see the add route).
+router.post('/items/:itemId/edit', uploadBrandImage, async (req, res) => {
   const ctx = await getItemWithAccess(req);
   if (!ctx) return res.status(404).send('غير موجود');
 
@@ -965,11 +974,43 @@ router.post('/items/:itemId/edit', async (req, res) => {
   const isWeekly = req.body.is_weekly === 'on' ? 1 : 0;
   const weekday = isWeekly && req.body.weekly_weekday !== '' ? Number(req.body.weekly_weekday) : null;
   const plannedStoreId = req.body.planned_store_id ? Number(req.body.planned_store_id) : null;
+  const details = (req.body.details || '').trim().slice(0, 120) || null;
+  // Specified brand: a new photo replaces the old one, "remove" clears it,
+  // otherwise it's kept; clearing both name and specs drops the whole brand.
+  const planned = readPlannedBrand(req.body);
+  let plannedImage = null;
+  if (planned.brand || planned.detail) {
+    plannedImage = (await saveBrandImage(req.file)) || (req.body.remove_planned_brand_image ? null : ctx.item.planned_brand_image);
+  }
 
   await run(
-    'UPDATE list_items SET name = ?, quantity = ?, unit = ?, category = ?, is_weekly = ?, weekly_weekday = ?, planned_store_id = ? WHERE id = ?',
-    [name, quantity, unit, category, isWeekly, weekday, plannedStoreId, ctx.item.id]
+    'UPDATE list_items SET name = ?, quantity = ?, unit = ?, category = ?, is_weekly = ?, weekly_weekday = ?, planned_store_id = ?, details = ?, planned_brand = ?, planned_brand_detail = ?, planned_brand_image = ? WHERE id = ?',
+    [name, quantity, unit, category, isWeekly, weekday, plannedStoreId, details, planned.brand, planned.detail, plannedImage, ctx.item.id]
   );
+  redirectBackTo(req, res, ctx.item.list_id);
+});
+
+// Set / change / clear just the specified brand of an item (the 🏷 popup on
+// an active item), leaving its other fields alone. Photo: a new upload, or a
+// past brand's photo picked from the popup's chips (validated), or else the
+// current one unless removed. clear=1 (or empty name + specs) drops it.
+router.post('/items/:itemId/planned-brand', uploadBrandImage, async (req, res) => {
+  const ctx = await getItemWithAccess(req);
+  if (!ctx) return res.status(404).send('غير موجود');
+  const planned = req.body.clear ? { brand: null, detail: null } : readPlannedBrand(req.body);
+  let image = null;
+  if (planned.brand || planned.detail) {
+    image =
+      (await saveBrandImage(req.file)) ||
+      validExistingBrandImage(req.body.existing_brand_image) ||
+      (req.body.remove_planned_brand_image ? null : ctx.item.planned_brand_image);
+  }
+  await run('UPDATE list_items SET planned_brand = ?, planned_brand_detail = ?, planned_brand_image = ? WHERE id = ?', [
+    planned.brand,
+    planned.detail,
+    image,
+    ctx.item.id,
+  ]);
   redirectBackTo(req, res, ctx.item.list_id);
 });
 
@@ -980,6 +1021,65 @@ router.post('/items/:itemId/delete', async (req, res) => {
   await run('DELETE FROM list_items WHERE id = ?', [ctx.item.id]);
   redirectBackTo(req, res, ctx.item.list_id);
 });
+
+// Price comparison for the item history page: purchases of the exact same
+// product — same brand AND same details; only the price may differ — grouped
+// together, then compared across stores and over time. Text is normalized
+// (spacing, أ/إ/آ→ا, ة→ه, ى→ي, case) so trivial typing differences don't
+// split a product in two. Purchases without a price or without any brand
+// info can't be compared and are skipped.
+const normalizeProductText = (s) =>
+  String(s || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .toLowerCase();
+
+const buildPriceComparison = (purchases) => {
+  const groups = new Map();
+  const chronological = purchases
+    .filter((p) => p.price !== null && (p.brand || p.brand_detail))
+    .sort((a, b) => String(a.bought_at).localeCompare(String(b.bought_at)) || a.id - b.id);
+  chronological.forEach((p) => {
+    const key = normalizeProductText(p.brand) + '|' + normalizeProductText(p.brand_detail);
+    if (!groups.has(key)) groups.set(key, { brand: p.brand, detail: p.brand_detail, purchases: [] });
+    const g = groups.get(key);
+    // Show the most recent spelling as the group's label.
+    g.brand = p.brand;
+    g.detail = p.brand_detail;
+    g.purchases.push(p);
+  });
+
+  return [...groups.values()]
+    .map((g) => {
+      const byStore = new Map();
+      g.purchases.forEach((p) => {
+        const storeKey = p.store_id || 0;
+        const s = byStore.get(storeKey) || { storeName: p.store_name || 'بدون محل', count: 0, minPrice: Infinity };
+        s.count++;
+        s.minPrice = Math.min(s.minPrice, p.price);
+        s.lastPrice = p.price; // chronological, so the last one wins
+        s.lastDate = String(p.bought_at).slice(0, 10);
+        byStore.set(storeKey, s);
+      });
+      const stores = [...byStore.values()].sort((a, b) => a.lastPrice - b.lastPrice);
+      // "Cheapest" only means something when there's more than one store.
+      if (stores.length > 1 && stores[0].lastPrice < stores[stores.length - 1].lastPrice) stores[0].cheapest = true;
+
+      let prev = null;
+      const timeline = g.purchases.map((p) => {
+        const entry = { date: String(p.bought_at).slice(0, 10), storeName: p.store_name || 'بدون محل', price: p.price };
+        if (prev !== null && prev > 0) entry.changePct = Math.round(((p.price - prev) / prev) * 100);
+        prev = p.price;
+        return entry;
+      });
+      return { brand: g.brand, detail: g.detail, stores, timeline, lastAt: g.purchases[g.purchases.length - 1].bought_at };
+    })
+    // Most recently bought product first.
+    .sort((a, b) => String(b.lastAt).localeCompare(String(a.lastAt)));
+};
 
 router.get('/items/:itemId/history', async (req, res) => {
   const ctx = await getItemWithAccess(req);
@@ -997,7 +1097,8 @@ router.get('/items/:itemId/history', async (req, res) => {
     [ctx.item.id]
   );
   const stores = await all('SELECT * FROM stores ORDER BY name ASC');
-  res.render('item-history', { item: ctx.item, list: ctx.list, purchases, stores, order });
+  const comparison = buildPriceComparison(purchases);
+  res.render('item-history', { item: ctx.item, list: ctx.list, purchases, stores, order, comparison });
 });
 
 // Looks up a purchase plus its item, only if the current user owns or is

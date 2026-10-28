@@ -91,6 +91,15 @@ const init = async () => {
   await safeAlter('ALTER TABLE list_items ADD COLUMN hidden_from_shared INTEGER NOT NULL DEFAULT 0');
   await safeAlter('ALTER TABLE list_items ADD COLUMN unit TEXT');
   await safeAlter('ALTER TABLE list_items ADD COLUMN planned_store_id INTEGER REFERENCES stores(id)');
+  // Free-text note on the item itself ("قليل الدسم", "الحجم الكبير"...).
+  await safeAlter('ALTER TABLE list_items ADD COLUMN details TEXT');
+  // A brand chosen for the item up front (before buying): name, its specs and
+  // an optional photo. Offered first in the buy panel; buying it records an
+  // ordinary purchase, so it then shows up in history/price comparison and
+  // the past-brand buttons like any other brand.
+  await safeAlter('ALTER TABLE list_items ADD COLUMN planned_brand TEXT');
+  await safeAlter('ALTER TABLE list_items ADD COLUMN planned_brand_detail TEXT');
+  await safeAlter('ALTER TABLE list_items ADD COLUMN planned_brand_image TEXT');
 
   await run(`CREATE TABLE IF NOT EXISTS item_purchases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

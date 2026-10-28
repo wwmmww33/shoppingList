@@ -20,6 +20,64 @@
             </div>
         </div>
 
+        <%# Price comparison: one block per exact product (same brand + same
+            details), compared across stores and over time — see
+            buildPriceComparison in routes/lists.js. %>
+        <% if (comparison.length > 0) { %>
+        <% const fmtDate = function(d) { return String(d).split('-').reverse().join('-'); }; %>
+        <div class="card">
+            <h3 style="margin:0 0 4px;"><i data-lucide="scale" class="lucide"></i> مقارنة الأسعار</h3>
+            <p class="history-sub" style="margin:0 0 10px;">لنفس البراند بنفس التفاصيل — سعر الوحدة بين المحلات ومع الوقت.</p>
+            <% comparison.forEach(function(g) { %>
+                <div class="compare-group">
+                    <div class="compare-title">
+                        <strong><%= g.brand || g.detail %></strong>
+                        <% if (g.brand && g.detail) { %><span class="history-sub"><%= g.detail %></span><% } %>
+                    </div>
+
+                    <div class="compare-stores">
+                        <% g.stores.forEach(function(s) { %>
+                            <div class="compare-store <%= s.cheapest ? 'cheapest' : '' %>">
+                                <div class="compare-store-name">
+                                    <i data-lucide="store" class="lucide"></i> <%= s.storeName %>
+                                    <% if (s.cheapest) { %><span class="compare-badge">الأرخص</span><% } %>
+                                </div>
+                                <div class="compare-store-price"><%= Number(s.lastPrice).toFixed(3) %></div>
+                                <div class="history-sub compare-store-meta">
+                                    آخر شراء <%= fmtDate(s.lastDate) %>
+                                    <% if (s.count > 1) { %>· <%= s.count %> مرات · أقل سعر <%= Number(s.minPrice).toFixed(3) %><% } %>
+                                </div>
+                            </div>
+                        <% }) %>
+                    </div>
+
+                    <% if (g.timeline.length > 1) { %>
+                        <%# Only the most recent few, so a weekly item's timeline doesn't
+                            grow without end (the full list is in the table below). %>
+                        <% const TIMELINE_MAX = 8; %>
+                        <% if (g.timeline.length > TIMELINE_MAX) { %><p class="history-sub" style="margin:8px 0 0;">آخر <%= TIMELINE_MAX %> عمليات شراء:</p><% } %>
+                        <div class="compare-timeline">
+                            <% g.timeline.slice(-TIMELINE_MAX).forEach(function(t) { %>
+                                <span class="compare-point">
+                                    <span class="history-sub"><%= fmtDate(t.date) %> · <%= t.storeName %></span>
+                                    <strong><%= Number(t.price).toFixed(3) %></strong>
+                                    <% if (t.changePct !== undefined && t.changePct !== 0) { %>
+                                        <%# dir="ltr" keeps "+50%" / "-40%" from being flipped by the RTL text around it. %>
+                                        <span class="compare-change <%= t.changePct > 0 ? 'up' : 'down' %>"><%= t.changePct > 0 ? '▲' : '▼' %> <span dir="ltr"><%= t.changePct > 0 ? '+' : '' %><%= t.changePct %>%</span></span>
+                                    <% } else if (t.changePct === 0) { %>
+                                        <span class="compare-change same">= بدون تغيير</span>
+                                    <% } %>
+                                </span>
+                            <% }) %>
+                        </div>
+                    <% } else { %>
+                        <p class="history-sub" style="margin:6px 0 0;">عملية شراء واحدة فقط حتى الآن — تظهر المقارنة عند شرائه مرة أخرى.</p>
+                    <% } %>
+                </div>
+            <% }) %>
+        </div>
+        <% } %>
+
         <div class="card">
             <% if (purchases.length === 0) { %>
                 <p style="color: var(--text-muted);">لا يوجد سجل شراء لهذا الغرض بعد.</p>

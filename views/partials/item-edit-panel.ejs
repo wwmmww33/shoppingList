@@ -2,6 +2,7 @@
     <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
     <input type="text" name="name" value="<%= item.name %>" required class="flex-2">
     <input type="text" name="quantity" value="<%= item.quantity || '' %>" placeholder="الكمية (اختياري)">
+    <input type="text" name="details" value="<%= item.details || '' %>" maxlength="120" placeholder="التفاصيل (اختياري)">
     <select name="unit">
         <option value="">بدون وحدة</option>
         <% (typeof units !== 'undefined' ? units : []).forEach(function(u) { %>
@@ -28,5 +29,24 @@
             <option value="<%= idx %>" <%= item.weekly_weekday === idx ? 'selected' : '' %>><%= name %></option>
         <% }) %>
     </select>
+    <%# Specified brand: set, change or clear (empty name + specs removes it).
+        Same field names as the add-item modal; a new photo is uploaded with
+        the form (multipart), otherwise the current one is kept unless removed. %>
+    <div class="edit-planned-brand">
+        <span class="history-sub"><i data-lucide="tag" class="lucide"></i> البراند المحدد (اختياري)</span>
+        <input type="text" name="planned_brand" value="<%= item.planned_brand || '' %>" maxlength="80" placeholder="اسم البراند">
+        <input type="text" name="planned_brand_detail" value="<%= item.planned_brand_detail || '' %>" maxlength="120" placeholder="مواصفات البراند">
+        <div class="item-photo-row">
+            <% if (item.planned_brand_image) { %>
+                <img src="<%= item.planned_brand_image %>" class="brand-thumb" alt="صورة البراند" onclick="openImageLightbox(this.src)">
+                <label style="display:inline-flex; align-items:center; gap:4px; font-size:0.85rem;"><input type="checkbox" name="remove_planned_brand_image" value="1"> حذف الصورة</label>
+            <% } %>
+            <label class="btn btn-outline btn-sm">
+                <i data-lucide="camera" class="lucide"></i> <%= item.planned_brand_image ? 'تغيير الصورة' : 'صورة البراند' %>
+                <input type="file" name="brand_image" accept="image/*" style="display:none;" onchange="this.closest('.item-photo-row').querySelector('.planned-photo-picked').textContent = this.files[0] ? '✓ تم اختيار صورة' : '';">
+            </label>
+            <span class="history-sub planned-photo-picked"></span>
+        </div>
+    </div>
     <button type="submit" class="btn btn-success btn-sm">حفظ التعديل</button>
 </form>

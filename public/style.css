@@ -114,6 +114,40 @@ input[type="text"], input[type="email"], input[type="password"], input[type="num
 .btn.btn-success:hover { background: var(--success-dark); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
+/* Specified ("planned") brand: the add-item buttons row (its "تحديد براند"
+   opens a popup), its line under the item name, the highlighted buy button,
+   and the edit-panel block. */
+.add-item-actions { display: flex; gap: 8px; flex: 1 1 100%; flex-wrap: wrap; }
+.add-item-actions .btn { flex: 1 1 auto; }
+.add-item-actions .btn.active { border-color: var(--primary); color: var(--primary); }
+.item-planned-brand {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 0.82rem;
+  color: var(--primary-dark);
+  margin-top: 2px;
+}
+.item-planned-brand[data-item-brand] { cursor: pointer; }
+.btn.btn-planned-brand { background: var(--primary); color: #fff; }
+/* Existing item's brand popup: past-brand chips. */
+.ib-past { flex-direction: column; gap: 6px; flex: 1 1 100%; }
+.ib-past-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.edit-planned-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 100%;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+/* "إضافة غرض": photo buttons that fill the name + category via AI. */
+.item-photo-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex: 1 1 100%; }
+.item-photo-row label.btn { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+
 /* Account page: drag-and-drop category order (SortableJS, handle-only).
    Each category is one compact line; its edit fields open below on ✏. */
 .category-sort-row {
@@ -301,6 +335,14 @@ input[type="text"], input[type="email"], input[type="password"], input[type="num
 .item-name { font-weight: 700; font-size: 1.08rem; color: var(--primary-dark); }
 .item-row.bought .item-name, .item-row.cancelled .item-name { text-decoration: line-through; }
 .item-qty { color: var(--text-muted); font-size: 0.82rem; }
+/* The item's own note ("قليل الدسم"), right after its name/quantity. */
+.item-details {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: var(--badge-bg);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
 .icon-badge { font-size: 0.85rem; }
 .item-sub { color: var(--text-muted); font-size: 0.75rem; margin-top: 2px; }
 
@@ -577,6 +619,26 @@ table.history-table th, table.history-table td { padding: 8px; text-align: cente
 table.history-table tr.best td { background: var(--success-bg); font-weight: bold; }
 .history-sub { font-size: 0.75rem; color: var(--text-muted); font-weight: normal; }
 table.history-table td[data-label="التاريخ"] { white-space: nowrap; }
+
+/* Item history: price comparison (same brand + details) across stores/time. */
+.compare-group { padding: 10px 0; border-top: 1px solid var(--border); }
+.compare-group:first-of-type { border-top: none; padding-top: 0; }
+.compare-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.compare-stores { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.compare-store { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--card); }
+.compare-store.cheapest { border-color: var(--success); background: var(--success-bg); }
+.compare-store-name { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 0.85rem; }
+.compare-store-price { font-size: 1.25rem; font-weight: 700; margin: 2px 0; }
+.compare-badge { font-size: 0.7rem; font-weight: 700; color: #fff; background: var(--success); border-radius: 999px; padding: 1px 7px; }
+.compare-timeline { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.compare-point {
+  display: inline-flex; flex-direction: column; gap: 1px;
+  border: 1px dashed var(--border); border-radius: 8px; padding: 5px 8px; font-size: 0.85rem;
+}
+.compare-change { font-size: 0.75rem; font-weight: 700; }
+.compare-change.up { color: var(--danger); }
+.compare-change.down { color: var(--success); }
+.compare-change.same { color: var(--text-muted); font-weight: normal; }
 /* Phones: 8 columns can't fit, so each purchase becomes a card with one
    "label — value" line per column (labels come from each cell's data-label). */
 @media (max-width: 640px) {

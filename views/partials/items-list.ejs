@@ -40,7 +40,7 @@ unitList.forEach(function(u) { unitMap[u.key] = u; });
 function catHeaderHtml(c, collapseId, showAddButton) {
     const color = c ? c.color : '#9e9e9e';
     const icon = '<i data-lucide="' + (c ? c.icon : 'package') + '" class="lucide cat-icon" style="color:' + color + ';"></i>';
-    const label = (c ? c.label : 'غير مصنف');
+    const label = escapeHtml(c ? c.label : 'غير مصنف');
     if (collapseId) {
         return '<div class="category-header category-header-toggle" onclick="toggleCollapsible(\'' + collapseId + '\')">' +
             icon + ' ' + label + ' <span class="chev">▾</span></div>';
@@ -50,12 +50,58 @@ function catHeaderHtml(c, collapseId, showAddButton) {
         : '';
     return '<div class="category-header">' + icon + ' ' + label + addBtn + '</div>';
 }
+// For the helpers below that build raw HTML (printed unescaped by the
+// template): anything a person typed must be escaped, or it would run as
+// markup/script for everyone viewing the list.
+function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 // "2 كجم" when both are set, "2" or "كجم" alone when only one is, nothing otherwise.
 function qtyLabel(item) {
     const unitLabel = item.unit && unitMap[item.unit] ? unitMap[item.unit].label : '';
     const parts = [item.quantity, unitLabel].filter(Boolean);
     if (parts.length === 0) return '';
-    return '<span class="item-qty">(' + parts.join(' ') + ')</span>';
+    return '<span class="item-qty">(' + escapeHtml(parts.join(' ')) + ')</span>';
+}
+// Specified ("planned") brand <-> past purchases: matched by brand + specs
+// with the same normalization as the price comparison (spacing, أ/ا, ة/ه,
+// ى/ي, case), so a brand picked up front and the same brand recorded at a
+// past purchase are treated as one.
+function normBrandText(s) {
+    return String(s || '').trim().replace(/\s+/g, ' ').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').toLowerCase();
+}
+function hasPlannedBrand(item) {
+    return !!(item.planned_brand || item.planned_brand_detail);
+}
+function brandKey(brand, detail) {
+    return normBrandText(brand) + '|' + normBrandText(detail);
+}
+// The profile the "شراء البراند المحدد" button opens the brand modal with:
+// the specified brand's name/specs/photo, plus price/qty/store from the most
+// recent past purchase of that same brand when there is one (pastBrands is
+// newest first). `key` lets the buy panel skip every past profile of that
+// brand — one per store it was bought from — since this button covers them.
+function plannedBrandProfile(item) {
+    if (!hasPlannedBrand(item)) return null;
+    const key = brandKey(item.planned_brand, item.planned_brand_detail);
+    const past = (item.pastBrands || []).find(function(b) { return brandKey(b.brand, b.detail) === key; }) || null;
+    return {
+        key: key,
+        profile: {
+            brand: item.planned_brand || '',
+            detail: item.planned_brand_detail || '',
+            price: past && past.price !== null ? past.price : '',
+            qty: past && past.qty !== null ? past.qty : '',
+            storeId: past ? past.storeId || '' : '',
+            image: item.planned_brand_image || (past && past.image) || '',
+        },
+        lastPrice: past ? past.price : null,
+    };
+}
+// The item's own free-text note ("قليل الدسم"), shown right after its name.
+function detailsLabel(item) {
+    if (!item.details) return '';
+    return '<span class="item-details">' + escapeHtml(item.details) + '</span>';
 }
 // "price" is always the price of a single unit; quantity defaults to 1 when
 // left blank (never written into the stored row — a real "bought 1" and "qty
@@ -153,8 +199,23 @@ function priceQtyLabel(price, qty) {
             <h3>إضافة غرض</h3>
             <button type="button" class="icon-btn" title="إغلاق" onclick="toggleAddItemModal('<%= listId %>')"><i data-lucide="x" class="lucide"></i></button>
         </div>
-    <form data-ajax-item-action method="POST" action="/lists/<%= listId %>/items" class="inline-form">
+    <form data-ajax-item-action method="POST" action="/lists/<%= listId %>/items" class="inline-form" id="add-item-form-<%= listId %>">
         <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+        <%# Optional: a photo of the item fills in its name + category via AI
+            (analyzeItemPhoto). The file inputs have no name, so the photo is
+            never submitted with the form itself. %>
+        <div class="item-photo-row">
+            <label class="btn btn-outline btn-sm">
+                <i data-lucide="camera" class="lucide"></i> التقاط صورة
+                <input type="file" accept="image/*" capture="environment" style="display:none;" onchange="analyzeItemPhoto(this, '<%= listId %>')">
+            </label>
+            <label class="btn btn-outline btn-sm">
+                <i data-lucide="image" class="lucide"></i> من المعرض
+                <input type="file" accept="image/*" style="display:none;" onchange="analyzeItemPhoto(this, '<%= listId %>')">
+            </label>
+            <img id="item-photo-preview-<%= listId %>" class="brand-thumb" style="display:none;" alt="صورة الغرض">
+            <span id="item-photo-status-<%= listId %>" class="history-sub"></span>
+        </div>
         <div class="form-row">
             <div class="autocomplete-wrap flex-2">
                 <input type="text" name="name" id="item-name-<%= listId %>" placeholder="اسم الغرض" required autocomplete="off" data-known-items="<%= JSON.stringify(typeof knownItemNames !== 'undefined' ? knownItemNames : []) %>">
@@ -162,6 +223,8 @@ function priceQtyLabel(price, qty) {
             </div>
             <input type="text" name="quantity" placeholder="الكمية (اختياري)" class="flex-1">
         </div>
+        <input type="text" name="details" id="item-details-<%= listId %>" maxlength="120" placeholder="التفاصيل (اختياري) مثال: قليل الدسم، الحجم الكبير">
+
         <select name="unit" class="flex-1">
             <option value="">بدون وحدة</option>
             <% unitList.forEach(function(u) { %>
@@ -194,8 +257,99 @@ function priceQtyLabel(price, qty) {
                 <option value="<%= idx %>"><%= name %></option>
             <% }) %>
         </select>
-        <button type="submit" class="btn btn-success">+ إضافة</button>
+        <div class="add-item-actions">
+            <button type="submit" class="btn btn-success">+ إضافة</button>
+            <button type="button" class="btn btn-outline" id="planned-brand-toggle-<%= listId %>" onclick="openPlannedBrandModal('<%= listId %>')"><i data-lucide="tag" class="lucide"></i> <span id="planned-brand-toggle-label-<%= listId %>">تحديد براند</span></button>
+        </div>
     </form>
+    </div>
+</div>
+
+<%# Optional specified brand for the item being added, in its own popup over
+    the add-item modal. Its fields live outside the add form but belong to it
+    via form="add-item-form-…", so "+ إضافة" submits them along with the item
+    (the AJAX submit gathers form.elements, which includes them). Its photo
+    inputs are the only named file inputs of that form (brand_image). %>
+<div class="modal-overlay" id="planned-brand-modal-<%= listId %>" onclick="if (event.target === this) closePlannedBrandModal('<%= listId %>')">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3><i data-lucide="tag" class="lucide"></i> تحديد براند</h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="closePlannedBrandModal('<%= listId %>')"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+        <div class="inline-form">
+            <label class="field">اسم البراند
+                <input type="text" form="add-item-form-<%= listId %>" name="planned_brand" id="planned-brand-<%= listId %>" class="pb-name" maxlength="80" placeholder="مثال: المراعي">
+            </label>
+            <label class="field">مواصفات البراند
+                <input type="text" form="add-item-form-<%= listId %>" name="planned_brand_detail" id="planned-brand-detail-<%= listId %>" class="pb-detail" maxlength="120" placeholder="الحجم/النوع، مثال: 2 لتر قليل الدسم">
+            </label>
+            <div class="item-photo-row">
+                <label class="btn btn-outline btn-sm">
+                    <i data-lucide="camera" class="lucide"></i> صورة البراند
+                    <input type="file" form="add-item-form-<%= listId %>" name="brand_image" class="planned-brand-file" accept="image/*" capture="environment" style="display:none;" onchange="pickPlannedBrandPhoto(this)">
+                </label>
+                <label class="btn btn-outline btn-sm">
+                    <i data-lucide="image" class="lucide"></i> من المعرض
+                    <input type="file" form="add-item-form-<%= listId %>" name="brand_image" class="planned-brand-file" accept="image/*" style="display:none;" onchange="pickPlannedBrandPhoto(this)">
+                </label>
+                <%# Only shown once the item itself was filled from a photo. %>
+                <button type="button" class="btn btn-outline btn-sm" id="use-item-photo-<%= listId %>" style="display:none;" onclick="useItemPhotoForBrand('<%= listId %>')">
+                    <i data-lucide="images" class="lucide"></i> استخدام صورة الغرض
+                </button>
+                <img id="planned-brand-preview-<%= listId %>" class="brand-thumb pb-preview" style="display:none;" alt="صورة البراند">
+                <span id="planned-brand-status-<%= listId %>" class="history-sub pb-status"></span>
+            </div>
+            <div class="add-item-actions">
+                <button type="button" class="btn btn-success" onclick="closePlannedBrandModal('<%= listId %>')">تم</button>
+                <button type="button" class="btn btn-outline" onclick="clearPlannedBrand('<%= listId %>'); closePlannedBrandModal('<%= listId %>')">إزالة البراند</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<%# Specified brand for an item already on the list (🏷 in its icons, or a
+    tap on its "البراند المحدد" line). One popup per list, filled per item by
+    openItemBrandModal; saves through /items/:id/planned-brand without
+    touching the item's other fields. Chips offer the brands this item was
+    bought with before (name, specs and that purchase's photo). %>
+<div class="modal-overlay" id="item-brand-modal-<%= listId %>" onclick="if (event.target === this) this.classList.remove('open')">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3><i data-lucide="tag" class="lucide"></i> تحديد براند: <span class="ib-item-name"></span></h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="this.closest('.modal-overlay').classList.remove('open')"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+        <form data-ajax-item-action method="POST" class="inline-form" id="item-brand-form-<%= listId %>">
+            <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+            <input type="hidden" name="existing_brand_image" class="pb-existing" value="">
+            <input type="hidden" name="clear" class="ib-clear" value="">
+            <div class="ib-past" style="display:none;">
+                <span class="history-sub">من البراندات السابقة لهذا الغرض:</span>
+                <div class="ib-past-list"></div>
+            </div>
+            <label class="field">اسم البراند
+                <input type="text" name="planned_brand" class="pb-name" maxlength="80" placeholder="مثال: المراعي">
+            </label>
+            <label class="field">مواصفات البراند
+                <input type="text" name="planned_brand_detail" class="pb-detail" maxlength="120" placeholder="الحجم/النوع، مثال: 2 لتر قليل الدسم">
+            </label>
+            <div class="item-photo-row">
+                <label class="btn btn-outline btn-sm">
+                    <i data-lucide="camera" class="lucide"></i> صورة البراند
+                    <input type="file" name="brand_image" class="planned-brand-file" accept="image/*" capture="environment" style="display:none;" onchange="pickPlannedBrandPhoto(this)">
+                </label>
+                <label class="btn btn-outline btn-sm">
+                    <i data-lucide="image" class="lucide"></i> من المعرض
+                    <input type="file" name="brand_image" class="planned-brand-file" accept="image/*" style="display:none;" onchange="pickPlannedBrandPhoto(this)">
+                </label>
+                <img class="brand-thumb pb-preview" style="display:none;" alt="صورة البراند" onclick="openImageLightbox(this.src)">
+                <label class="ib-remove-wrap" style="display:none; align-items:center; gap:4px; font-size:0.85rem;"><input type="checkbox" name="remove_planned_brand_image" value="1" class="pb-remove"> حذف الصورة</label>
+                <span class="history-sub pb-status"></span>
+            </div>
+            <div class="add-item-actions">
+                <button type="submit" class="btn btn-success">حفظ البراند</button>
+                <button type="button" class="btn btn-outline ib-clear-btn" onclick="var f = this.form; f.querySelector('.ib-clear').value = '1'; f.requestSubmit();">إزالة البراند</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -287,11 +441,37 @@ activeItems.forEach(function(item) {
             <% if (item.last_brand_image) { %><img src="<%= item.last_brand_image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="event.stopPropagation(); openImageLightbox(this.src);"><% } %>
             <span class="item-name"><%= item.name %></span>
             <%- qtyLabel(item) %>
+            <%- detailsLabel(item) %>
             <% if (item.is_weekly) { %><i data-lucide="repeat" class="lucide icon-badge" title="أسبوعي - <%= weekdayNames[item.weekly_weekday] %>"></i><% } %>
             <% if (item.hidden_from_shared) { %><i data-lucide="eye-off" class="lucide icon-badge" title="مخفي عن المشاركين"></i><% } %>
             <% if (item.planned_store_name) { %><i data-lucide="map-pin" class="lucide icon-badge" title="المحل المخطط: <%= item.planned_store_name %>"></i><% } %>
             <button type="button" class="icon-btn" title="تم الشراء" style="margin-inline-start:auto;" onclick="event.stopPropagation(); toggleBuyPanel(<%= item.id %>)"><i data-lucide="check-circle" class="lucide"></i></button>
         </div>
+        <%
+        // Data for the 🏷 popup (openItemBrandModal): this item's specified
+        // brand plus the distinct brands it was bought with before — one chip
+        // per brand+specs (pastBrands has one entry per store; newest first,
+        // so each chip carries that brand's latest photo).
+        var seenBrandKeys = {};
+        var itemBrandData = JSON.stringify({
+            id: item.id, name: item.name,
+            brand: item.planned_brand || '', detail: item.planned_brand_detail || '', image: item.planned_brand_image || '',
+            past: (item.pastBrands || []).filter(function(b) {
+                var k = brandKey(b.brand, b.detail);
+                if (seenBrandKeys[k]) return false;
+                seenBrandKeys[k] = true;
+                return true;
+            }).map(function(b) { return { brand: b.brand || '', detail: b.detail || '', image: b.image || '' }; }),
+        });
+        %>
+        <% if (hasPlannedBrand(item)) { %>
+        <div class="item-planned-brand" data-item-brand="<%= itemBrandData %>" onclick="event.stopPropagation(); openItemBrandModal('<%= listId %>', this)" title="تعديل البراند المحدد">
+            <i data-lucide="tag" class="lucide"></i>
+            <% if (item.planned_brand_image) { %><img src="<%= item.planned_brand_image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="event.stopPropagation(); openImageLightbox(this.src);"><% } %>
+            البراند المحدد: <strong><%= item.planned_brand || item.planned_brand_detail %></strong>
+            <% if (item.planned_brand && item.planned_brand_detail) { %><span>(<%= item.planned_brand_detail %>)</span><% } %>
+        </div>
+        <% } %>
         <div class="item-sub">
             آخر شراء: <%= item.last_bought_at ? String(item.last_bought_at).slice(0,10).split('-').reverse().join('-') + ' ' + String(item.last_bought_at).slice(11,16) : 'لم يُشترَ بعد' %>
             <% if (item.last_brand || item.last_brand_detail) { %>· البراند: <%= item.last_brand || item.last_brand_detail %><% if (item.last_brand && item.last_brand_detail) { %> (<%= item.last_brand_detail %>)<% } %><% } %>
@@ -302,6 +482,7 @@ activeItems.forEach(function(item) {
         <div class="item-icons">
             <div class="item-icons-extra" id="item-icons-extra-<%= item.id %>" style="display:none;">
                 <button type="button" class="icon-btn" title="تعديل" onclick="event.stopPropagation(); toggleEditPanel(<%= item.id %>, this)"><i data-lucide="pencil" class="lucide"></i></button>
+                <button type="button" class="icon-btn" title="تحديد براند" data-item-brand="<%= itemBrandData %>" onclick="event.stopPropagation(); openItemBrandModal('<%= listId %>', this)"><i data-lucide="tag" class="lucide"></i></button>
                 <% if (availableLists.length > 0) { %>
                     <button type="button" class="icon-btn" title="نقل أو نسخ لقائمة أخرى" onclick="event.stopPropagation(); toggleMovePanel(<%= item.id %>, this)"><i data-lucide="move" class="lucide"></i></button>
                 <% } %>
@@ -330,29 +511,32 @@ activeItems.forEach(function(item) {
                 <button type="submit" class="btn btn-success btn-sm"><i data-lucide="check" class="lucide"></i> إكمال الشراء</button>
             </form>
             <%
-            // Past brand profiles are offered right here as one-tap re-buys
-            // (same brand/detail/price/photo as last time), not hidden behind
-            // "إضافة علامة تجارية" — that button is only for a brand that
-            // isn't already in this list. The store always follows the
-            // currently-confirmed shopping location (quick-buy-store), not
-            // wherever this profile was last bought from, since the person
-            // might be buying the same brand from a different store now.
+            // Past brand profiles are offered right here, not hidden behind
+            // "إضافة علامة تجارية" (that's only for a brand not listed yet).
+            // Tapping one opens the brand modal pre-filled with that profile
+            // (brand/detail/price/qty/store/photo) to confirm or adjust before
+            // buying — see openBrandModalWith. Nothing changed = same brand at
+            // the same price; a new price = same brand (same profile, since
+            // profiles are keyed by brand+detail+store), new latest price.
+            // The specified brand (if any) comes first, highlighted; the past
+            // profile of that same brand is then skipped below so it isn't
+            // offered twice.
+            var planned = plannedBrandProfile(item);
+            if (planned) {
+                var plannedLabel = item.planned_brand || item.planned_brand_detail;
+                if (item.planned_brand && item.planned_brand_detail) plannedLabel += ' - ' + item.planned_brand_detail;
+                if (planned.lastPrice !== null) plannedLabel += ' (آخر سعر ' + Number(planned.lastPrice).toFixed(3) + ')';
+            %>
+            <button type="button" class="btn btn-sm btn-planned-brand" data-brand-profile="<%= JSON.stringify(planned.profile) %>" onclick="openBrandModalWith(<%= item.id %>, this)"><i data-lucide="tag" class="lucide"></i> شراء البراند المحدد: <%= plannedLabel %></button>
+            <%
+            }
             item.pastBrands.forEach(function(b) {
+                if (planned && brandKey(b.brand, b.detail) === planned.key) return;
                 var label = b.brand || b.detail || 'بدون اسم';
                 if (b.brand && b.detail) label += ' - ' + b.detail;
                 if (b.price !== null) label += ' (' + priceQtyLabel(b.price, b.qty) + ')';
             %>
-            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" style="display:inline;">
-                <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
-                <input type="hidden" name="store_id" class="quick-buy-store" value="<%= b.storeId || '' %>">
-                <input type="hidden" name="brand_select" value="__custom__">
-                <input type="hidden" name="brand_custom" value="<%= b.brand || '' %>">
-                <input type="hidden" name="brand_detail" value="<%= b.detail || '' %>">
-                <input type="hidden" name="price" value="<%= b.price !== null ? b.price : '' %>">
-                <input type="hidden" name="purchased_qty" value="<%= b.qty !== null ? b.qty : '' %>">
-                <input type="hidden" name="existing_brand_image" value="<%= b.image || '' %>">
-                <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="repeat" class="lucide"></i> <%= label %></button>
-            </form>
+            <button type="button" class="btn btn-outline btn-sm" data-brand-profile="<%= JSON.stringify({ brand: b.brand || '', detail: b.detail || '', price: b.price !== null ? b.price : '', qty: b.qty !== null ? b.qty : '', storeId: b.storeId || '', image: b.image || '' }) %>" onclick="openBrandModalWith(<%= item.id %>, this)"><i data-lucide="tag" class="lucide"></i> <%= label %></button>
             <% }) %>
             <button type="button" class="btn btn-outline btn-sm" onclick="toggleBrandModal(<%= item.id %>, true)"><i data-lucide="tag" class="lucide"></i> إضافة علامة تجارية</button>
             <button type="button" class="btn btn-outline btn-sm" onclick="toggleBuyPanel(<%= item.id %>)">إلغاء</button>
@@ -366,12 +550,19 @@ activeItems.forEach(function(item) {
                 </div>
                 <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" class="inline-form">
                     <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
-                    <%# Past brands are already offered as one-tap re-buy buttons in
-                        the buy panel, so this modal is only for entering a new
-                        one — no past-brand picker here, just the name field. %>
+                    <%# Past brands are offered as buttons in the buy panel (they
+                        open this modal pre-filled), so there's no past-brand
+                        picker here, just the name field. %>
                     <input type="hidden" name="brand_select" value="__custom__">
-                    <input type="text" name="brand_custom" id="brand-custom-<%= item.id %>" placeholder="اسم البراند">
-                    <input type="text" name="brand_detail" id="brand-detail-<%= item.id %>" placeholder="تفاصيل البراند (الحجم/النوع، مثال: كرتون)">
+                    <%# Captions above each field: when the modal opens pre-filled
+                        from a past brand the placeholders are gone, and "0.3"
+                        alone doesn't say whether it's a price or a quantity. %>
+                    <label class="field">اسم البراند
+                        <input type="text" name="brand_custom" id="brand-custom-<%= item.id %>" placeholder="مثال: المراعي">
+                    </label>
+                    <label class="field">التفاصيل
+                        <input type="text" name="brand_detail" id="brand-detail-<%= item.id %>" placeholder="الحجم/النوع، مثال: كرتون">
+                    </label>
                     <div class="qty-picker">
                         <span class="qty-picker-label">عدد الوحدات</span>
                         <% [1, 2, 3, 4].forEach(function(n) { %><button type="button" class="qty-chip<%= n === 1 ? ' active' : '' %>" data-qty="<%= n %>" onclick="pickQty(this)"><%= n %></button><% }) %>
@@ -392,13 +583,17 @@ activeItems.forEach(function(item) {
                         <i data-lucide="sparkles" class="lucide"></i> تعبئة تلقائية بالذكاء الاصطناعي
                     </button>
                     <span id="brand-ai-status-<%= item.id %>" style="display:none; font-size:0.78rem; color: var(--text-muted);"></span>
-                    <select name="store_id" class="store-select">
-                        <option value="">بدون تحديد محل</option>
-                        <% stores.forEach(function(s) { %>
-                            <option value="<%= s.id %>" data-lat="<%= s.lat || '' %>" data-lng="<%= s.lng || '' %>"><%= s.name %></option>
-                        <% }) %>
-                    </select>
-                    <input type="number" step="0.001" min="0" inputmode="decimal" name="price" placeholder="سعر الوحدة (اختياري)">
+                    <label class="field">المحل
+                        <select name="store_id" class="store-select">
+                            <option value="">بدون تحديد محل</option>
+                            <% stores.forEach(function(s) { %>
+                                <option value="<%= s.id %>" data-lat="<%= s.lat || '' %>" data-lng="<%= s.lng || '' %>"><%= s.name %></option>
+                            <% }) %>
+                        </select>
+                    </label>
+                    <label class="field">سعر الوحدة
+                        <input type="number" step="0.001" min="0" inputmode="decimal" name="price" placeholder="اختياري">
+                    </label>
                     <button type="submit" class="btn btn-success btn-sm">تأكيد الشراء</button>
                     <button type="button" class="btn btn-outline btn-sm" onclick="toggleBrandModal(<%= item.id %>)">إلغاء</button>
                 </form>
@@ -451,6 +646,7 @@ archivedItems.forEach(function(item) {
             <span class="item-name"><%= item.name %></span>
             <span class="in-active-badge"><i data-lucide="check" class="lucide"></i> في القائمة</span>
             <%- qtyLabel(item) %>
+            <%- detailsLabel(item) %>
             <% if (isBought && item.is_weekly) { %><i data-lucide="repeat" class="lucide icon-badge" title="أسبوعي - <%= weekdayNames[item.weekly_weekday] %>"></i><% } %>
             <% if (isBought && item.hidden_from_shared) { %><i data-lucide="eye-off" class="lucide icon-badge" title="مخفي عن المشاركين"></i><% } %>
             <%# Both restore (icon, below) and this undo are always rendered; CSS
@@ -519,8 +715,8 @@ if (catGroupOpen) { %></div><% } %>
         }
     }
     // forceNew: opened via "إضافة علامة تجارية" for a brand that isn't
-    // already offered as a one-tap re-buy in the buy panel — starts from a
-    // blank form instead of whatever was typed last time.
+    // already offered as a past-brand button in the buy panel — starts from
+    // a blank form instead of whatever was typed last time.
     function toggleBrandModal(id, forceNew) {
         var el = document.getElementById('brand-modal-' + id);
         if (el) {
@@ -562,6 +758,14 @@ if (catGroupOpen) { %></div><% } %>
         var overlay = document.getElementById('archive-drawer-overlay');
         if (drawer) drawer.classList.toggle('open');
         if (overlay) overlay.classList.toggle('open');
+        // Closing the drawer means the person is done picking: apply any
+        // refresh that was held back while they were in it right away (not
+        // after the idle wait), so the items they restored show up in the
+        // active list as soon as they're back on it.
+        if (drawer && !drawer.classList.contains('open')) {
+            if (optimisticInflight > 0) refreshWhenSettled = true;
+            else if (deferredRefresh) { deferredRefresh = false; refreshItemsListNow(); }
+        }
     }
 
     // The floating action buttons can sit over the last item(s) in a list,
@@ -744,6 +948,207 @@ if (catGroupOpen) { %></div><% } %>
         http_402: 'رصيد حساب DeepSeek فارغ (402) — المفتاح صحيح لكن يلزم شحن الحساب من platform.deepseek.com',
         http_429: 'تم تجاوز حد الطلبات المسموح به مؤقتًا (429) — جرّب بعد قليل',
     };
+    // "تحديد براند" in the add-item modal opens the specified-brand popup on
+    // top of it. Closing it ("تم", ✕ or outside) keeps what was entered and
+    // shows it on the button; "إزالة البراند" clears it.
+    function openPlannedBrandModal(listId) {
+        var modal = document.getElementById('planned-brand-modal-' + listId);
+        if (!modal) return;
+        modal.classList.add('open');
+        updateItemPhotoOption(listId);
+        var input = document.getElementById('planned-brand-' + listId);
+        if (input) input.focus();
+    }
+    function closePlannedBrandModal(listId) {
+        var modal = document.getElementById('planned-brand-modal-' + listId);
+        if (modal) modal.classList.remove('open');
+        updatePlannedBrandButton(listId);
+    }
+    function updatePlannedBrandButton(listId) {
+        var name = (document.getElementById('planned-brand-' + listId) || {}).value || '';
+        var detail = (document.getElementById('planned-brand-detail-' + listId) || {}).value || '';
+        var label = document.getElementById('planned-brand-toggle-label-' + listId);
+        var btn = document.getElementById('planned-brand-toggle-' + listId);
+        var chosen = (name.trim() || detail.trim());
+        if (label) label.textContent = chosen ? 'البراند: ' + chosen : 'تحديد براند';
+        if (btn) btn.classList.toggle('active', !!chosen);
+    }
+    function clearPlannedBrand(listId) {
+        ['planned-brand-', 'planned-brand-detail-'].forEach(function(p) {
+            var el = document.getElementById(p + listId);
+            if (el) el.value = '';
+        });
+        var modal = document.getElementById('planned-brand-modal-' + listId);
+        if (modal) modal.querySelectorAll('.planned-brand-file').forEach(function(f) { f.value = ''; });
+        var preview = document.getElementById('planned-brand-preview-' + listId);
+        if (preview) { preview.style.display = 'none'; preview.removeAttribute('src'); }
+        var status = document.getElementById('planned-brand-status-' + listId);
+        if (status) status.textContent = '';
+        updatePlannedBrandButton(listId);
+    }
+    // Shows "استخدام صورة الغرض" in the brand popup only once the item has a photo.
+    function updateItemPhotoOption(listId) {
+        var itemPreview = document.getElementById('item-photo-preview-' + listId);
+        var btn = document.getElementById('use-item-photo-' + listId);
+        if (btn) btn.style.display = itemPreview && itemPreview._photoFile ? '' : 'none';
+    }
+    // 🏷 on an existing item: fills the list's item-brand popup from the
+    // button's data-item-brand (current specified brand + past brands) and
+    // points its form at that item.
+    function openItemBrandModal(listId, el) {
+        var modal = document.getElementById('item-brand-modal-' + listId);
+        if (!modal) return;
+        var d = {};
+        try { d = JSON.parse(el.getAttribute('data-item-brand')) || {}; } catch (e) {}
+        var form = modal.querySelector('form');
+        form.action = '/items/' + d.id + '/planned-brand';
+        form.reset();
+        modal.querySelector('.ib-item-name').textContent = d.name || '';
+        form.querySelector('.ib-clear').value = '';
+        form.querySelector('.pb-existing').value = '';
+        form.querySelector('.pb-name').value = d.brand || '';
+        form.querySelector('.pb-detail').value = d.detail || '';
+        form.querySelector('.pb-status').textContent = '';
+        var preview = form.querySelector('.pb-preview');
+        if (d.image) { preview.src = d.image; preview.style.display = 'inline-block'; }
+        else { preview.removeAttribute('src'); preview.style.display = 'none'; }
+        form.querySelector('.ib-remove-wrap').style.display = d.image ? 'inline-flex' : 'none';
+        form.querySelector('.ib-clear-btn').style.display = (d.brand || d.detail) ? '' : 'none';
+
+        var pastWrap = form.querySelector('.ib-past');
+        var pastList = form.querySelector('.ib-past-list');
+        pastList.innerHTML = '';
+        (d.past || []).forEach(function(b) {
+            var chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'btn btn-outline btn-sm';
+            chip.textContent = (b.brand || b.detail) + (b.brand && b.detail ? ' - ' + b.detail : '');
+            chip.onclick = function() {
+                form.querySelector('.pb-name').value = b.brand;
+                form.querySelector('.pb-detail').value = b.detail;
+                form.querySelectorAll('.planned-brand-file').forEach(function(f) { f.value = ''; });
+                form.querySelector('.pb-existing').value = b.image || '';
+                form.querySelector('.pb-remove').checked = false;
+                if (b.image) { preview.src = b.image; preview.style.display = 'inline-block'; }
+                form.querySelector('.pb-status').textContent = '';
+            };
+            pastList.appendChild(chip);
+        });
+        pastWrap.style.display = (d.past || []).length ? 'flex' : 'none';
+        modal.classList.add('open');
+    }
+
+    // A specified-brand photo picked from the camera/gallery buttons — in the
+    // add-item brand popup or an existing item's brand popup (the shared code
+    // below finds the fields by class within whichever popup it's in).
+    function pickPlannedBrandPhoto(input) {
+        var file = input.files && input.files[0];
+        if (file) usePlannedBrandFile(file, input, input.closest('.modal-dialog'));
+    }
+    // Third option in the add-item brand popup: reuse the photo the item
+    // itself was filled from (analyzeItemPhoto keeps it on its preview
+    // element, so it disappears with the add form after the item is added).
+    function useItemPhotoForBrand(listId) {
+        var itemPreview = document.getElementById('item-photo-preview-' + listId);
+        var file = itemPreview && itemPreview._photoFile;
+        var target = document.querySelector('#planned-brand-modal-' + listId + ' .planned-brand-file');
+        if (file && target) usePlannedBrandFile(file, target, target.closest('.modal-dialog'));
+    }
+    // Puts the photo into `input` (the one uploaded with the form; any other
+    // photo input in the popup is cleared, as is a past brand's photo picked
+    // from the chips), shrunk, previews it, and asks the AI to read the brand
+    // name and specs from it, filling whichever fields are still empty — the
+    // AI gets a larger copy server-side, so specs printed on the pack (size,
+    // weight, variant) can be read.
+    function usePlannedBrandFile(file, input, root) {
+        root.querySelectorAll('.planned-brand-file').forEach(function(other) { if (other !== input) other.value = ''; });
+        var existing = root.querySelector('.pb-existing');
+        if (existing) existing.value = '';
+        var removeBox = root.querySelector('.pb-remove');
+        if (removeBox) removeBox.checked = false;
+        var status = root.querySelector('.pb-status');
+        var nameInput = root.querySelector('.pb-name');
+        var detailInput = root.querySelector('.pb-detail');
+        compressImageFile(file, 1600, 0.82).then(function(small) {
+            try { var dt = new DataTransfer(); dt.items.add(small); input.files = dt.files; } catch (e) {}
+            var preview = root.querySelector('.pb-preview');
+            if (preview) { preview.src = URL.createObjectURL(small); preview.style.display = 'inline-block'; }
+            if (nameInput.value.trim() && detailInput.value.trim()) {
+                if (status) status.textContent = '';
+                return;
+            }
+            if (status) status.textContent = 'جاري قراءة البراند ومواصفاته بالذكاء الاصطناعي...';
+            var fd = new FormData();
+            fd.append('brand_image', small);
+            return fetch('/brand-image/analyze', { method: 'POST', body: fd })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    var filled = false;
+                    if (data && data.brand && !nameInput.value.trim()) { nameInput.value = data.brand; filled = true; }
+                    if (data && data.detail && !detailInput.value.trim()) { detailInput.value = data.detail; filled = true; }
+                    if (status) status.textContent = filled
+                        ? 'تمت التعبئة بالذكاء الاصطناعي، يمكنك التعديل'
+                        : 'لم يتمكن الذكاء الاصطناعي من قراءة البراند أو مواصفاته من الصورة';
+                });
+        }).catch(function() { if (status) status.textContent = ''; });
+    }
+
+    // "إضافة غرض" from a photo: shrink it, ask the server's AI for the item's
+    // name + category, and fill both fields (still editable). A photo means
+    // "this is the item", so it replaces whatever name was typed before.
+    function analyzeItemPhoto(input, listId) {
+        var file = input.files && input.files[0];
+        input.value = '';
+        if (!file) return;
+        var status = document.getElementById('item-photo-status-' + listId);
+        var preview = document.getElementById('item-photo-preview-' + listId);
+        var nameInput = document.getElementById('item-name-' + listId);
+        var categorySelect = document.getElementById('item-category-' + listId);
+        var catStatus = document.getElementById('item-category-ai-status-' + listId);
+        if (status) status.textContent = 'جاري التعرف على الغرض بالذكاء الاصطناعي...';
+        // Keep the original (not the 1024px copy) for "استخدام صورة الغرض" in the
+        // brand popup, where reading the small print needs the full detail.
+        if (preview) preview._photoFile = file;
+        updateItemPhotoOption(listId);
+        compressImageFile(file, 1024, 0.8).then(function(small) {
+            if (preview) { preview.src = URL.createObjectURL(small); preview.style.display = 'inline-block'; }
+            var fd = new FormData();
+            fd.append('brand_image', small);
+            return fetch('/items/analyze-image', { method: 'POST', body: fd });
+        })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (!data || !data.name) {
+                    if (status) status.textContent = (data && data.reason === 'not_recognized')
+                        ? 'لم يتم التعرف على الغرض — اكتب اسمه يدويًا'
+                        : categoryAiFailureMessage(data && data.reason);
+                    return;
+                }
+                nameInput.value = data.name;
+                // Set before the name field's own blur-classifier could run,
+                // which only fills an empty category.
+                if (data.category && categorySelect) categorySelect.value = data.category;
+                // Quantity defaults to 1 (unless one was already typed); the
+                // unit is the AI's guess of how this item is usually bought.
+                var form = nameInput.closest('form');
+                var qtyInput = form.querySelector('input[name="quantity"]');
+                if (qtyInput && !qtyInput.value.trim()) qtyInput.value = '1';
+                var unitSelect = form.querySelector('select[name="unit"]');
+                if (unitSelect && data.unit && unitSelect.querySelector('option[value="' + data.unit + '"]')) unitSelect.value = data.unit;
+                // Details only fill an empty field — never overwrite a typed note.
+                var detailsInput = form.querySelector('input[name="details"]');
+                if (detailsInput && data.details && !detailsInput.value.trim()) detailsInput.value = data.details;
+                if (status) {
+                    status.innerHTML = '<i data-lucide="sparkles" class="lucide"></i> تمت التعبئة بالذكاء الاصطناعي، يمكنك التعديل';
+                    if (window.renderIcons) renderIcons();
+                }
+                if (catStatus) catStatus.textContent = '';
+            })
+            .catch(function() {
+                if (status) status.textContent = 'تعذّر الاتصال بالخادم — تحقق من اتصالك بالإنترنت';
+            });
+    }
+
     function categoryAiFailureMessage(reason) {
         if (CATEGORY_AI_FAILURE_MESSAGES[reason]) return CATEGORY_AI_FAILURE_MESSAGES[reason];
         if (reason && reason.indexOf('http_') === 0) {
@@ -863,9 +1268,39 @@ if (catGroupOpen) { %></div><% } %>
         });
     }
 
-    // Clears the "new brand" modal back to a blank form (name, detail, price,
-    // qty, store, photo) so each "إضافة علامة تجارية" starts fresh. Re-buying
-    // a past brand goes through the buy panel's one-tap buttons instead.
+    // A past-brand button in the buy panel: opens the brand modal pre-filled
+    // with that profile so the person can confirm it as-is or adjust any field
+    // (e.g. today's price) before "تأكيد الشراء". The store is the profile's
+    // last one unless a current shopping location is set, which wins — same
+    // as before, since the same brand may be bought from another store now.
+    function openBrandModalWith(id, btn) {
+        var modal = document.getElementById('brand-modal-' + id);
+        if (!modal) return;
+        var b = {};
+        try { b = JSON.parse(btn.getAttribute('data-brand-profile')) || {}; } catch (e) {}
+        resetBrandModal(id);
+        document.getElementById('brand-custom-' + id).value = b.brand || '';
+        document.getElementById('brand-detail-' + id).value = b.detail || '';
+        var qtyInput = document.getElementById('purchased-qty-' + id);
+        qtyInput.value = b.qty !== '' && b.qty !== undefined ? b.qty : '';
+        syncQtyChips(qtyInput);
+        modal.querySelector('input[name="price"]').value = b.price !== '' && b.price !== undefined ? b.price : '';
+        var storeSelect = modal.querySelector('select[name="store_id"]');
+        if (storeSelect && b.storeId && storeSelect.querySelector('option[value="' + b.storeId + '"]')) storeSelect.value = b.storeId;
+        if (b.image) {
+            // Carried over as the purchase's photo unless a new one is picked
+            // (previewBrandImage clears this field when that happens).
+            document.getElementById('existing-brand-image-' + id).value = b.image;
+            var img = document.getElementById('brand-image-preview-' + id);
+            if (img) { img.src = b.image; img.style.display = 'inline-block'; }
+        }
+        modal.classList.add('open');
+        applyCurrentStoreToOpenPanels();
+    }
+
+    // Clears the brand modal back to a blank form (name, detail, price, qty,
+    // store, photo) so each "إضافة علامة تجارية" starts fresh; a past-brand
+    // button then fills it back in (openBrandModalWith).
     function resetBrandModal(id) {
         var modal = document.getElementById('brand-modal-' + id);
         if (!modal) return;
@@ -1315,6 +1750,7 @@ if (catGroupOpen) { %></div><% } %>
     var IDLE_REFRESH_MS = 20000;
     var lastActivityAt = Date.now();
     var deferredRefresh = false;
+    var refreshWhenSettled = false;
     ['pointerdown', 'touchstart', 'touchmove', 'keydown', 'wheel', 'input'].forEach(function(type) {
         document.addEventListener(type, function() { lastActivityAt = Date.now(); }, { capture: true, passive: true });
     });
@@ -1407,7 +1843,14 @@ if (catGroupOpen) { %></div><% } %>
             .then(function(html) {
                 settle();
                 if (optimisticInflight > 0) return;
-                if (optimisticBatched || !canAutoRefresh()) {
+                if (refreshWhenSettled) {
+                    // The drawer was closed while this was in flight: refresh
+                    // now with a fresh copy (covers any overlapping taps too).
+                    refreshWhenSettled = false;
+                    optimisticBatched = false;
+                    deferredRefresh = false;
+                    refreshItemsListNow();
+                } else if (optimisticBatched || !canAutoRefresh()) {
                     // Either several taps overlapped (this response may
                     // predate the others' changes) or the person is still
                     // busy — fetch one fresh copy once they've gone idle.
@@ -1472,12 +1915,14 @@ if (catGroupOpen) { %></div><% } %>
         // only parses application/x-www-form-urlencoded bodies; a raw FormData
         // body silently drops every field server-side, including redirect_to.
         // Exception: a form carrying an actual selected file (the optional
-        // brand photo) is sent as real multipart, which the buy route alone
-        // knows how to parse (via multer) — converting it to URLSearchParams
-        // would stringify the File and lose the image data entirely.
+        // brand photo) is sent as real multipart, which the routes taking a
+        // photo know how to parse (via multer) — converting it to
+        // URLSearchParams would stringify the File and lose the image data.
+        // form.elements (not a descendant query) so inputs that belong to the
+        // form via form="…" from outside it (the specified-brand popup) count.
         var buildBody = function() {
-            var hasFile = Array.from(form.querySelectorAll('input[type="file"]')).some(function(f) {
-                return f.files && f.files.length > 0;
+            var hasFile = Array.from(form.elements).some(function(f) {
+                return f.type === 'file' && f.files && f.files.length > 0;
             });
             return hasFile ? new FormData(form) : new URLSearchParams(new FormData(form));
         };
