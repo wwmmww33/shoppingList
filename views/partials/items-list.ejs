@@ -37,17 +37,23 @@ unitList.forEach(function(u) { unitMap[u.key] = u; });
 // itself a toggle: the group's items start folded, and clicking the header
 // opens/closes just that group (same collapse mechanism and open-state
 // preservation already used for the outer section).
-function catHeaderHtml(c, collapseId, showAddButton) {
+function catHeaderHtml(c, collapseId, showAddButton, startOpen) {
     const color = c ? c.color : '#9e9e9e';
     const icon = '<i data-lucide="' + (c ? c.icon : 'package') + '" class="lucide cat-icon" style="color:' + color + ';"></i>';
     const label = escapeHtml(c ? c.label : 'غير مصنف');
-    if (collapseId) {
-        return '<div class="category-header category-header-toggle" onclick="toggleCollapsible(\'' + collapseId + '\')">' +
-            icon + ' ' + label + ' <span class="chev">▾</span></div>';
-    }
+    // stopPropagation on the add button: it sits inside the header, which
+    // toggles the group when collapseId is set, so tapping "+" must not also
+    // fold/unfold the group underneath it.
     const addBtn = showAddButton
-        ? ' <button type="button" class="icon-btn" title="إضافة غرض في هذا التصنيف" onclick="openAddItemModalForCategory(\'' + listId + '\', \'' + (c ? c.key : '') + '\');"><i data-lucide="plus-circle" class="lucide"></i></button>'
+        ? ' <button type="button" class="icon-btn" title="إضافة غرض في هذا التصنيف" onclick="event.stopPropagation(); openAddItemModalForCategory(\'' + listId + '\', \'' + (c ? c.key : '') + '\');"><i data-lucide="plus-circle" class="lucide"></i></button>'
         : '';
+    if (collapseId) {
+        // startOpen keeps the chev's rotation in sync with a group that
+        // starts expanded (active items) rather than folded (archive) —
+        // toggleCollapsible only flips this class from here on.
+        return '<div class="category-header category-header-toggle' + (startOpen ? ' open' : '') + '" onclick="toggleCollapsible(\'' + collapseId + '\')">' +
+            icon + ' ' + label + addBtn + ' <span class="chev">▾</span></div>';
+    }
     return '<div class="category-header">' + icon + ' ' + label + addBtn + '</div>';
 }
 // For the helpers below that build raw HTML (printed unescaped by the
@@ -427,13 +433,18 @@ function priceQtyLabel(price, qty) {
 <% } %>
 <%
 let lastCategory = '__none__';
+let activeCatGroupOpen = false;
 activeItems.forEach(function(item) {
     const cat = item.category || '';
     if (cat !== lastCategory) {
+        if (activeCatGroupOpen) { %></div><% }
         lastCategory = cat;
+        const activeGroupId = 'catgrp-active-' + (cat || 'none') + '-' + listId;
 %>
-    <%- catHeaderHtml(catMap[cat], undefined, true) %>
+    <%- catHeaderHtml(catMap[cat], activeGroupId, true, true) %>
+    <div class="collapsible-body open" id="<%= activeGroupId %>">
 <%
+        activeCatGroupOpen = true;
     }
 %>
     <div class="item-row <%= item.hidden_from_shared ? 'hidden-item' : '' %>" data-item-id="<%= item.id %>">
@@ -505,9 +516,15 @@ activeItems.forEach(function(item) {
         </div>
 
         <div class="buy-panel" id="buy-panel-<%= item.id %>" onclick="event.stopPropagation();">
-            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" style="display:inline;">
+            <%# No brand on hand right now? Still record the price (and an
+                optional note) without forcing a brand name — this stays a
+                plain purchase with brand left empty, same as the brand modal
+                allows when brand_custom is left blank. %>
+            <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" class="inline-form">
                 <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
                 <input type="hidden" name="store_id" class="quick-buy-store">
+                <input type="text" name="brand_detail" placeholder="تفاصيل (اختياري)" style="flex:1 1 120px;">
+                <input type="number" step="0.001" min="0" inputmode="decimal" name="price" placeholder="السعر (اختياري)" style="flex:1 1 100px;">
                 <button type="submit" class="btn btn-success btn-sm"><i data-lucide="check" class="lucide"></i> إكمال الشراء</button>
             </form>
             <%
@@ -545,7 +562,7 @@ activeItems.forEach(function(item) {
         <div class="modal-overlay" id="brand-modal-<%= item.id %>" onclick="if (event.target === this) toggleBrandModal(<%= item.id %>)">
             <div class="modal-dialog">
                 <div class="modal-header">
-                    <h3>بيانات العلامة التجارية</h3>
+                    <h3>بيانات العلامة التجارية: <%= item.name %></h3>
                     <button type="button" class="icon-btn" title="إغلاق" onclick="toggleBrandModal(<%= item.id %>)"><i data-lucide="x" class="lucide"></i></button>
                 </div>
                 <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" class="inline-form">
@@ -603,7 +620,8 @@ activeItems.forEach(function(item) {
         <%- include('item-edit-panel', { item: item, weekdayNames: weekdayNames, itemCategories: itemCategories, units: unitList, stores: stores, redirectTarget: redirectTarget }) %>
         <%- include('item-move-panel', { item: item, availableLists: availableLists, redirectTarget: redirectTarget }) %>
     </div>
-<% }) %>
+<% })
+if (activeCatGroupOpen) { %></div><% } %>
 
 <div class="drawer-overlay" id="archive-drawer-overlay" onclick="toggleArchiveDrawer()"></div>
 <div class="lists-drawer archive-drawer" id="archive-drawer">
@@ -758,11 +776,13 @@ if (catGroupOpen) { %></div><% } %>
         var overlay = document.getElementById('archive-drawer-overlay');
         if (drawer) drawer.classList.toggle('open');
         if (overlay) overlay.classList.toggle('open');
-        // Closing the drawer means the person is done picking: apply any
-        // refresh that was held back while they were in it right away (not
-        // after the idle wait), so the items they restored show up in the
-        // active list as soon as they're back on it.
-        if (drawer && !drawer.classList.contains('open')) {
+        // Both directions mean any refresh held back while items were being
+        // tapped should land right away, not after the idle wait: opening so
+        // the drawer itself shows what was just bought instead of a stale
+        // snapshot, closing so the active list reflects anything restored
+        // from it. applyFetchedHtml preserves the drawer's own open state and
+        // scroll position, so refreshing while it's open doesn't close it.
+        if (drawer) {
             if (optimisticInflight > 0) refreshWhenSettled = true;
             else if (deferredRefresh) { deferredRefresh = false; refreshItemsListNow(); }
         }
@@ -1525,6 +1545,23 @@ if (catGroupOpen) { %></div><% } %>
         renderStoreLocatorState();
     }
 
+    // Coming back to the app after being away for a while (phone locked, tab
+    // switched away, ...) often means the person has moved — e.g. finished
+    // shopping at one store and driven to the next. Re-checks location as
+    // soon as the page is visible again, same suggestion panel as the
+    // in-shopping gap check below, but triggered by returning to the app
+    // rather than by a purchase — so it also helps before the first buy.
+    var APP_RESUME_GAP_MS = 5 * 60 * 1000;
+    var lastHiddenAt = null;
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'hidden') {
+            lastHiddenAt = Date.now();
+        } else if (document.visibilityState === 'visible' && lastHiddenAt) {
+            if (Date.now() - lastHiddenAt > APP_RESUME_GAP_MS) refreshStoreLocation('gap');
+            lastHiddenAt = null;
+        }
+    });
+
     // If a "current store" is set and more than this long passes between two
     // purchases, it's a sign the person likely moved to a different store
     // without updating it — re-check location instead of silently attaching
@@ -1818,6 +1855,13 @@ if (catGroupOpen) { %></div><% } %>
     function submitOptimistic(form, actionUrl, body, itemId, isBuy) {
         var row = form.closest('.item-row');
         row.querySelectorAll('.modal-overlay.open').forEach(function(m) { m.classList.remove('open'); });
+        // Whichever panel (buy/move) or modal was just used to submit this is
+        // done once the tap lands — closing it here (rather than leaving its
+        // .open class behind on a row that's about to be hidden/replaced)
+        // keeps hasOpenInteraction() from mistaking "the panel I just used"
+        // for "another panel still mid-edit", which would otherwise defer
+        // this item's own refresh indefinitely.
+        row.querySelectorAll('.buy-panel.open, .move-panel.open').forEach(function(p) { p.classList.remove('open'); });
         var pending = optimisticPending[itemId] || (optimisticPending[itemId] = { count: 0 });
         pending.count++;
         var mode = pending.mode = optimisticModeFor(actionUrl);
@@ -1850,10 +1894,14 @@ if (catGroupOpen) { %></div><% } %>
                     optimisticBatched = false;
                     deferredRefresh = false;
                     refreshItemsListNow();
-                } else if (optimisticBatched || !canAutoRefresh()) {
+                } else if (optimisticBatched || hasOpenInteraction()) {
                     // Either several taps overlapped (this response may
-                    // predate the others' changes) or the person is still
-                    // busy — fetch one fresh copy once they've gone idle.
+                    // predate the others' changes) or another panel has
+                    // half-entered input a full refresh would wipe out —
+                    // fetch one fresh copy once idle/clear instead. A lone,
+                    // settled action always refreshes right away (not after
+                    // the idle wait) so the bought/archived list reflects it
+                    // immediately, not just the optimistic row-hide.
                     optimisticBatched = false;
                     deferredRefresh = true;
                 } else {
@@ -1888,6 +1936,18 @@ if (catGroupOpen) { %></div><% } %>
         // still sent from here even after pressing "Cancel".
         if (e.defaultPrevented) return;
         e.preventDefault();
+
+        // A slow/flaky connection or an accidental double-tap otherwise fires
+        // this same form twice before the first request (or its DOM-replacing
+        // response) ever lands — most noticeable as a duplicated item from
+        // double-tapping "+ إضافة". Blocked per-form, not globally, so acting
+        // on a different item/button at the same time still works normally.
+        if (form.dataset.submitting) return;
+        form.dataset.submitting = '1';
+        var clearSubmitting = function() { delete form.dataset.submitting; };
+        // Safety net: a response that never resolves (and so never reaches a
+        // .then/.catch below) would otherwise leave the form stuck forever.
+        setTimeout(clearSubmitting, 15000);
 
         if (!document.getElementById('items-list-root')) { form.submit(); return; }
 
@@ -1929,6 +1989,7 @@ if (catGroupOpen) { %></div><% } %>
 
         if (row && itemId && OPTIMISTIC_ACTIONS.test(actionUrl)) {
             var request = submitOptimistic(form, actionUrl, buildBody(), itemId, isBuy);
+            request.then(clearSubmitting, clearSubmitting);
             if (isBuy) {
                 pendingBuyRequests[itemId] = request;
                 showUndoBuyToast(itemId, itemName, currentRedirect);
@@ -1941,13 +2002,14 @@ if (catGroupOpen) { %></div><% } %>
             fetch(actionUrl, { method: 'POST', body: buildBody() })
                 .then(function(res) { return res.text(); })
                 .then(function(html) {
+                    clearSubmitting();
                     applyFetchedHtml(html, actionUrl);
                     if (isBuy && itemId) {
                         showUndoBuyToast(itemId, itemName, currentRedirect);
                         handleBuySuccess(buyPrice, buyQty);
                     }
                 })
-                .catch(function() { form.submit(); });
+                .catch(function() { clearSubmitting(); form.submit(); });
         };
 
         if (row) {
