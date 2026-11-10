@@ -14,85 +14,152 @@
         <button type="button" class="fab" title="إضافة مهمة" onclick="toggleAddTaskModal()">
             <i data-lucide="plus" class="lucide"></i>
         </button>
+
+        <%# Location-first: pick an existing location (shared with the
+            shopping store list) or pin a new one, THEN name the task. A new
+            location is saved straight into `stores` on submit. %>
         <div class="modal-overlay" id="add-task-overlay" onclick="if (event.target === this) toggleAddTaskModal()">
             <div class="modal-dialog">
                 <div class="modal-header">
                     <h3>إضافة مهمة</h3>
                     <button type="button" class="icon-btn" title="إغلاق" onclick="toggleAddTaskModal()"><i data-lucide="x" class="lucide"></i></button>
                 </div>
-                <p style="font-size:0.85rem; color: var(--text-muted); margin-top:-8px;">اضغط على الخريطة لتحديد الموقع الذي ستُذكَّر بالمهمة عند الاقتراب منه، أو استخدم موقعك الحالي.</p>
-                <div id="task-map"></div>
-                <p id="task-place-suggestion" style="display:none; font-size:0.85rem; margin:-4px 0 10px;"></p>
                 <form method="POST" action="/tasks" class="inline-form" id="task-form">
-                    <input type="text" name="title" id="task-title-input" placeholder="المهمة (مثال: استلام الغسيل)" required class="flex-2">
-                    <input type="hidden" name="lat" id="task-lat">
-                    <input type="hidden" name="lng" id="task-lng">
-                    <input type="hidden" name="place_name" id="task-place-name">
-                    <button type="button" class="btn btn-outline btn-sm" onclick="useMyLocationForTask()" id="task-locate-btn"><i data-lucide="locate-fixed" class="lucide"></i> موقعي الحالي</button>
+                    <label class="field">الموقع
+                        <select name="store_id" id="task-store-select" onchange="onTaskStoreChange()">
+                            <% stores.forEach(function(s) { %>
+                                <option value="<%= s.id %>"><%= s.name %></option>
+                            <% }) %>
+                            <option value="">+ موقع جديد</option>
+                        </select>
+                    </label>
+                    <div id="new-location-fields" style="display:<%= stores.length === 0 ? 'block' : 'none' %>;">
+                        <p class="history-sub" style="margin:0 0 8px;">اضغط على الخريطة لتحديد الموقع الجديد (كبّر الخريطة لتظهر أسماء الأماكن الفعلية عليها)، أو استخدم موقعك الحالي.</p>
+                        <div id="task-map"></div>
+                        <p id="task-place-suggestion" style="display:none; font-size:0.85rem; margin:8px 0;"></p>
+                        <input type="text" name="new_store_name" id="new-location-name" placeholder="اسم الموقع" class="flex-2" style="margin-top:8px;">
+                        <input type="hidden" name="lat" id="task-lat">
+                        <input type="hidden" name="lng" id="task-lng">
+                        <button type="button" class="btn btn-outline btn-sm" onclick="useMyLocationForTask()" style="margin-top:8px;"><i data-lucide="locate-fixed" class="lucide"></i> موقعي الحالي</button>
+                        <p id="task-locate-status" style="font-size:0.8rem; color: var(--text-muted); margin-top:6px;"></p>
+                    </div>
+                    <label class="field">المهمة
+                        <input type="text" name="title" id="task-title-input" placeholder="مثال: استلام الغسيل" required>
+                    </label>
                     <button type="submit" class="btn btn-success">+ إضافة</button>
                 </form>
-                <p id="task-locate-status" style="font-size:0.8rem; color: var(--text-muted); margin-top:6px;"></p>
             </div>
         </div>
 
-        <div class="card">
-            <h3 style="margin-top:0;">المهام النشطة</h3>
-            <p class="history-sub" style="margin:-6px 0 10px;">تُعرض لك كل ما تفتح التطبيق وأنت قريب من موقعها — هذا الفحص يحدث فقط عند فتح التطبيق أو العودة إليه، وليس إشعارًا لحظيًا.</p>
-            <% const activeTasks = tasks.filter(function(t) { return !t.is_done; }); %>
-            <% if (activeTasks.length === 0) { %>
-                <p style="color: var(--text-muted);">لا توجد مهام نشطة.</p>
-            <% } %>
-            <% activeTasks.forEach(function(t) { %>
-                <div class="list-row">
-                    <span>
-                        <i data-lucide="map-pin" class="lucide"></i> <%= t.title %>
-                        <% if (t.place_name) { %><span class="meta"><%= t.place_name %></span><% } %>
-                    </span>
-                    <span style="display:flex; gap:6px;">
-                        <form method="POST" action="/tasks/<%= t.id %>/done" style="display:inline;">
-                            <button type="submit" class="btn btn-success btn-sm"><i data-lucide="check" class="lucide"></i> تم</button>
-                        </form>
-                        <form method="POST" action="/tasks/<%= t.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذه المهمة؟');">
-                            <button type="submit" class="btn btn-danger btn-sm"><i data-lucide="trash-2" class="lucide"></i></button>
-                        </form>
-                    </span>
+        <%# Move-task panel: a tiny per-task popup with a location dropdown,
+            opened from each task row. Built once and re-pointed at whichever
+            task's "نقل" button was tapped, instead of one per task. %>
+        <div class="modal-overlay" id="move-task-overlay" onclick="if (event.target === this) toggleMoveTaskModal()">
+            <div class="modal-dialog">
+                <div class="modal-header">
+                    <h3>نقل المهمة إلى موقع آخر</h3>
+                    <button type="button" class="icon-btn" title="إغلاق" onclick="toggleMoveTaskModal()"><i data-lucide="x" class="lucide"></i></button>
                 </div>
-            <% }) %>
+                <form method="POST" id="move-task-form" class="inline-form">
+                    <select name="store_id" id="move-task-select">
+                        <% stores.forEach(function(s) { %>
+                            <option value="<%= s.id %>"><%= s.name %></option>
+                        <% }) %>
+                    </select>
+                    <button type="submit" class="btn btn-success btn-sm">نقل</button>
+                </form>
+            </div>
         </div>
 
-        <% const doneTasks = tasks.filter(function(t) { return t.is_done; }); %>
-        <% if (doneTasks.length > 0) { %>
-        <div class="card">
-            <h3 style="margin-top:0;">منتهية</h3>
-            <% doneTasks.forEach(function(t) { %>
-                <div class="list-row">
-                    <span style="text-decoration:line-through; color: var(--text-muted);">
-                        <i data-lucide="map-pin" class="lucide"></i> <%= t.title %>
-                        <% if (t.place_name) { %><span class="meta"><%= t.place_name %></span><% } %>
-                    </span>
-                    <span style="display:flex; gap:6px;">
-                        <form method="POST" action="/tasks/<%= t.id %>/undone" style="display:inline;">
-                            <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="rotate-ccw" class="lucide"></i></button>
-                        </form>
-                        <form method="POST" action="/tasks/<%= t.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذه المهمة؟');">
-                            <button type="submit" class="btn btn-danger btn-sm"><i data-lucide="trash-2" class="lucide"></i></button>
-                        </form>
-                    </span>
-                </div>
-            <% }) %>
-        </div>
+        <%
+        const byStore = {};
+        tasks.forEach(function(t) {
+            if (!byStore[t.store_id]) byStore[t.store_id] = { storeName: t.store_name, hasLocation: !!(t.store_lat && t.store_lng), tasks: [] };
+            byStore[t.store_id].tasks.push(t);
+        });
+        const storeGroups = Object.keys(byStore).map(function(id) { return { storeId: Number(id), ...byStore[id] }; });
+        %>
+        <% if (storeGroups.length === 0) { %>
+            <div class="card">
+                <p style="color: var(--text-muted);">لا توجد مهام بعد. اضغط + لاختيار موقع وإضافة أول مهمة له.</p>
+            </div>
         <% } %>
+        <% storeGroups.forEach(function(g) { %>
+            <div class="card">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+                    <h3 style="margin:0;">
+                        <i data-lucide="map-pin" class="lucide"></i> <%= g.storeName %>
+                        <% if (!g.hasLocation) { %><span class="meta" title="هذا الموقع بدون نقطة محفوظة، فلن يُرصَد تلقائيًا">بدون تحديد دقيق</span><% } %>
+                    </h3>
+                    <button type="button" class="icon-btn" title="إضافة مهمة في هذا الموقع" onclick="toggleAddTaskModal(<%= g.storeId %>)"><i data-lucide="plus-circle" class="lucide"></i></button>
+                </div>
+                <% g.tasks.filter(function(t) { return !t.is_done; }).forEach(function(t) { %>
+                    <div class="list-row">
+                        <span><%= t.title %></span>
+                        <span style="display:flex; gap:6px;">
+                            <button type="button" class="icon-btn" title="نقل لموقع آخر" onclick="toggleMoveTaskModal(<%= t.id %>)"><i data-lucide="move" class="lucide"></i></button>
+                            <form method="POST" action="/tasks/<%= t.id %>/done" style="display:inline;">
+                                <button type="submit" class="btn btn-success btn-sm"><i data-lucide="check" class="lucide"></i> تم</button>
+                            </form>
+                            <form method="POST" action="/tasks/<%= t.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذه المهمة؟');">
+                                <button type="submit" class="btn btn-danger btn-sm"><i data-lucide="trash-2" class="lucide"></i></button>
+                            </form>
+                        </span>
+                    </div>
+                <% }) %>
+                <% const doneInGroup = g.tasks.filter(function(t) { return t.is_done; }); %>
+                <% if (doneInGroup.length > 0) { %>
+                    <div class="collapsible-toggle" onclick="toggleCollapsible('done-tasks-<%= g.storeId %>')" style="cursor:pointer; font-size:0.85rem; color: var(--text-muted); margin-top:8px;">
+                        منتهية (<%= doneInGroup.length %>) <span class="chev">▾</span>
+                    </div>
+                    <div class="collapsible-body" id="done-tasks-<%= g.storeId %>">
+                        <% doneInGroup.forEach(function(t) { %>
+                            <div class="list-row">
+                                <span style="text-decoration:line-through; color: var(--text-muted);"><%= t.title %></span>
+                                <span style="display:flex; gap:6px;">
+                                    <form method="POST" action="/tasks/<%= t.id %>/undone" style="display:inline;">
+                                        <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="rotate-ccw" class="lucide"></i></button>
+                                    </form>
+                                    <form method="POST" action="/tasks/<%= t.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذه المهمة؟');">
+                                        <button type="submit" class="btn btn-danger btn-sm"><i data-lucide="trash-2" class="lucide"></i></button>
+                                    </form>
+                                </span>
+                            </div>
+                        <% }) %>
+                    </div>
+                <% } %>
+            </div>
+        <% }) %>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Same lazy-measure fix as the store map (Leaflet sizes itself at init
-        // time, which is wrong while this modal starts hidden).
-        function toggleAddTaskModal() {
+        // Same lazy-measure fix as the store map (Leaflet sizes itself at
+        // init time, which is wrong while this modal starts hidden).
+        // storeId: when opened from a specific location's "+" (instead of
+        // the page's main FAB), pre-selects that location and skips showing
+        // the new-location fields.
+        function toggleAddTaskModal(storeId) {
             var overlay = document.getElementById('add-task-overlay');
             if (!overlay) return;
+            var opening = !overlay.classList.contains('open');
             overlay.classList.toggle('open');
-            if (overlay.classList.contains('open')) {
+            if (opening) {
+                var select = document.getElementById('task-store-select');
+                if (storeId !== undefined && select.querySelector('option[value="' + storeId + '"]')) {
+                    select.value = String(storeId);
+                } else if (select.options.length > 0) {
+                    select.selectedIndex = 0;
+                }
+                onTaskStoreChange();
+                document.getElementById('task-title-input').focus();
+            }
+        }
+        function onTaskStoreChange() {
+            var select = document.getElementById('task-store-select');
+            var showMap = select.value === '';
+            document.getElementById('new-location-fields').style.display = showMap ? 'block' : 'none';
+            if (showMap) {
                 setTimeout(function() {
                     taskMap.invalidateSize();
                     taskMap.setView(taskMarker ? taskMarker.getLatLng() : taskDefaultCenter, taskMarker ? 17 : 7);
@@ -132,10 +199,14 @@
                 .then(function(res) { return res.json(); })
                 .then(function(data) {
                     var name = data && (data.name || (data.display_name ? data.display_name.split(',')[0] : ''));
-                    document.getElementById('task-place-name').value = name || '';
                     if (!name) return;
-                    box.innerHTML = 'الموقع: <strong>' + name + '</strong>';
+                    box.innerHTML = 'اقتراح اسم: <strong>' + name + '</strong> ' +
+                        '<button type="button" class="btn btn-outline btn-sm" id="use-task-suggestion-btn">استخدم هذا الاسم</button>';
                     box.style.display = 'block';
+                    document.getElementById('use-task-suggestion-btn').onclick = function() {
+                        document.getElementById('new-location-name').value = name;
+                        box.style.display = 'none';
+                    };
                 })
                 .catch(function() {});
         }
@@ -161,6 +232,16 @@
             }, function() {
                 status.textContent = 'تعذّر تحديد الموقع، يمكنك اختيار المكان من الخريطة يدويًا.';
             });
+        }
+
+        function toggleMoveTaskModal(taskId) {
+            var overlay = document.getElementById('move-task-overlay');
+            if (!overlay) return;
+            var opening = !overlay.classList.contains('open');
+            overlay.classList.toggle('open');
+            if (opening && taskId !== undefined) {
+                document.getElementById('move-task-form').action = '/tasks/' + taskId + '/move';
+            }
         }
     </script>
 </body>

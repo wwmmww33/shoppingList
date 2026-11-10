@@ -167,13 +167,22 @@ const init = async () => {
   // place". Checked client-side only when the app is opened/resumed (see
   // theme-init.ejs) — a plain web page can't reliably alert in the
   // background the instant someone walks near a spot, especially on iPhone.
+  // Tasks live at a location first (picked the same way as a shopping store
+  // — current position or a map pin — and saved into the SAME `stores`
+  // table), then tasks get added under it; a task can move between
+  // locations. This table is brand new and unreleased, so an earlier shape
+  // (free-standing lat/lng, no store_id) found with zero rows is recreated
+  // rather than migrated — a defensive no-op if real rows somehow exist.
+  const existingTasksTable = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'");
+  if (existingTasksTable && !/store_id/.test(existingTasksTable.sql)) {
+    const taskCount = await get('SELECT COUNT(*) AS c FROM tasks');
+    if (taskCount.c === 0) await run('DROP TABLE tasks');
+  }
   await run(`CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id INTEGER NOT NULL REFERENCES users(id),
+    store_id INTEGER NOT NULL REFERENCES stores(id),
     title TEXT NOT NULL,
-    place_name TEXT,
-    lat REAL NOT NULL,
-    lng REAL NOT NULL,
     is_done INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     done_at DATETIME
