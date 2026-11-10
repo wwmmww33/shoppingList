@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>المهام - قوائمنا</title>
+    <link rel="stylesheet" href="/style.css">
+    <%- include('partials/theme-init') %>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+    <%- include('partials/nav') %>
+    <div class="container">
+        <button type="button" class="fab" title="إضافة مهمة" onclick="toggleAddTaskModal()">
+            <i data-lucide="plus" class="lucide"></i>
+        </button>
+        <div class="modal-overlay" id="add-task-overlay" onclick="if (event.target === this) toggleAddTaskModal()">
+            <div class="modal-dialog">
+                <div class="modal-header">
+                    <h3>إضافة مهمة</h3>
+                    <button type="button" class="icon-btn" title="إغلاق" onclick="toggleAddTaskModal()"><i data-lucide="x" class="lucide"></i></button>
+                </div>
+                <p style="font-size:0.85rem; color: var(--text-muted); margin-top:-8px;">اضغط على الخريطة لتحديد الموقع الذي ستُذكَّر بالمهمة عند الاقتراب منه، أو استخدم موقعك الحالي.</p>
+                <div id="task-map"></div>
+                <p id="task-place-suggestion" style="display:none; font-size:0.85rem; margin:-4px 0 10px;"></p>
+                <form method="POST" action="/tasks" class="inline-form" id="task-form">
+                    <input type="text" name="title" id="task-title-input" placeholder="المهمة (مثال: استلام الغسيل)" required class="flex-2">
+                    <input type="hidden" name="lat" id="task-lat">
+                    <input type="hidden" name="lng" id="task-lng">
+                    <input type="hidden" name="place_name" id="task-place-name">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="useMyLocationForTask()" id="task-locate-btn"><i data-lucide="locate-fixed" class="lucide"></i> موقعي الحالي</button>
+                    <button type="submit" class="btn btn-success">+ إضافة</button>
+                </form>
+                <p id="task-locate-status" style="font-size:0.8rem; color: var(--text-muted); margin-top:6px;"></p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">المهام النشطة</h3>
+            <p class="history-sub" style="margin:-6px 0 10px;">تُعرض لك كل ما تفتح التطبيق وأنت قريب من موقعها — هذا الفحص يحدث فقط عند فتح التطبيق أو العودة إليه، وليس إشعارًا لحظيًا.</p>
+            <% const activeTasks = tasks.filter(function(t) { return !t.is_done; }); %>
+            <% if (activeTasks.length === 0) { %>
+                <p style="color: var(--text-muted);">لا توجد مهام نشطة.</p>
+            <% } %>
+            <% activeTasks.forEach(function(t) { %>
+                <div class="list-row">
+                    <span>
+                        <i data-lucide="map-pin" class="lucide"></i> <%= t.title %>
+                        <% if (t.place_name) { %><span class="meta"><%= t.place_name %></span><% } %>
+                    </span>
+                    <span style="display:flex; gap:6px;">
+                        <form method="POST" action="/tasks/<%= t.id %>/done" style="display:inline;">
+                            <button type="submit" class="btn btn-success btn-sm"><i data-lucide="check" class="lucide"></i> تم</button>
+                        </form>
+                        <form method="POST" action="/tasks/<%= t.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذه المهمة؟');">
+                            <button type="submit" class="btn btn-danger btn-sm"><i data-lucide="trash-2" class="lucide"></i></button>
+                        </form>
+                    </span>
+                </div>
+            <% }) %>
+        </div>
+
+        <% const doneTasks = tasks.filter(function(t) { return t.is_done; }); %>
+        <% if (doneTasks.length > 0) { %>
+        <div class="card">
+            <h3 style="margin-top:0;">منتهية</h3>
+            <% doneTasks.forEach(function(t) { %>
+                <div class="list-row">
+                    <span style="text-decoration:line-through; color: var(--text-muted);">
+                        <i data-lucide="map-pin" class="lucide"></i> <%= t.title %>
+                        <% if (t.place_name) { %><span class="meta"><%= t.place_name %></span><% } %>
+                    </span>
+                    <span style="display:flex; gap:6px;">
+                        <form method="POST" action="/tasks/<%= t.id %>/undone" style="display:inline;">
+                            <button type="submit" class="btn btn-outline btn-sm"><i data-lucide="rotate-ccw" class="lucide"></i></button>
+                        </form>
+                        <form method="POST" action="/tasks/<%= t.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذه المهمة؟');">
+                            <button type="submit" class="btn btn-danger btn-sm"><i data-lucide="trash-2" class="lucide"></i></button>
+                        </form>
+                    </span>
+                </div>
+            <% }) %>
+        </div>
+        <% } %>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Same lazy-measure fix as the store map (Leaflet sizes itself at init
+        // time, which is wrong while this modal starts hidden).
+        function toggleAddTaskModal() {
+            var overlay = document.getElementById('add-task-overlay');
+            if (!overlay) return;
+            overlay.classList.toggle('open');
+            if (overlay.classList.contains('open')) {
+                setTimeout(function() {
+                    taskMap.invalidateSize();
+                    taskMap.setView(taskMarker ? taskMarker.getLatLng() : taskDefaultCenter, taskMarker ? 17 : 7);
+                }, 150);
+            }
+        }
+
+        var taskDefaultCenter = [23.6, 58.5];
+        var taskMap = L.map('task-map').setView(taskDefaultCenter, 7);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(taskMap);
+
+        var taskMarker = null;
+        function placeTaskMarker(lat, lng) {
+            if (taskMarker) { taskMarker.setLatLng([lat, lng]); }
+            else { taskMarker = L.marker([lat, lng], { draggable: true }).addTo(taskMap); taskMarker.on('dragend', function() { var p = taskMarker.getLatLng(); setTaskLatLng(p.lat, p.lng); suggestTaskPlaceName(p.lat, p.lng); }); }
+            setTaskLatLng(lat, lng);
+        }
+        function setTaskLatLng(lat, lng) {
+            document.getElementById('task-lat').value = lat;
+            document.getElementById('task-lng').value = lng;
+        }
+
+        var taskSuggestAbortController = null;
+        function suggestTaskPlaceName(lat, lng) {
+            var box = document.getElementById('task-place-suggestion');
+            box.style.display = 'none';
+            if (taskSuggestAbortController) taskSuggestAbortController.abort();
+            taskSuggestAbortController = new AbortController();
+
+            fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=' + lat + '&lon=' + lng + '&zoom=18&addressdetails=0', {
+                signal: taskSuggestAbortController.signal,
+                headers: { 'Accept-Language': 'ar' }
+            })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    var name = data && (data.name || (data.display_name ? data.display_name.split(',')[0] : ''));
+                    document.getElementById('task-place-name').value = name || '';
+                    if (!name) return;
+                    box.innerHTML = 'الموقع: <strong>' + name + '</strong>';
+                    box.style.display = 'block';
+                })
+                .catch(function() {});
+        }
+
+        taskMap.on('click', function(e) {
+            placeTaskMarker(e.latlng.lat, e.latlng.lng);
+            document.getElementById('task-locate-status').textContent = 'تم تحديد الموقع من الخريطة ✓';
+            suggestTaskPlaceName(e.latlng.lat, e.latlng.lng);
+        });
+
+        function useMyLocationForTask() {
+            var status = document.getElementById('task-locate-status');
+            if (!navigator.geolocation) {
+                status.textContent = 'المتصفح لا يدعم تحديد الموقع.';
+                return;
+            }
+            status.textContent = 'جاري تحديد موقعك...';
+            navigator.geolocation.getCurrentPosition(function(pos) {
+                placeTaskMarker(pos.coords.latitude, pos.coords.longitude);
+                taskMap.setView([pos.coords.latitude, pos.coords.longitude], 17);
+                status.textContent = 'تم تحديد الموقع ✓';
+                suggestTaskPlaceName(pos.coords.latitude, pos.coords.longitude);
+            }, function() {
+                status.textContent = 'تعذّر تحديد الموقع، يمكنك اختيار المكان من الخريطة يدويًا.';
+            });
+        }
+    </script>
+</body>
+</html>

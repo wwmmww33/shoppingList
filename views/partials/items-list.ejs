@@ -413,9 +413,9 @@ function priceQtyLabel(price, qty) {
 </div>
 <% if (isOwner) { %>
 <div style="display:flex; justify-content:flex-end; gap:10px; margin:-4px 0 8px; font-size:0.82rem;">
-    <a href="<%= buildUrl({ hidden: null }) %>" class="ajax-sort-link" style="<%= activeHiddenFilter === 'all' ? 'font-weight:bold; color:var(--primary);' : 'color:var(--text-muted);' %>">الكل</a>
-    <a href="<%= buildUrl({ hidden: 'hide' }) %>" class="ajax-sort-link" style="<%= activeHiddenFilter === 'hide' ? 'font-weight:bold; color:var(--primary);' : 'color:var(--text-muted);' %>">غير المخفية</a>
-    <a href="<%= buildUrl({ hidden: 'only' }) %>" class="ajax-sort-link" style="<%= activeHiddenFilter === 'only' ? 'font-weight:bold; color:var(--primary);' : 'color:var(--text-muted);' %>">المخفية فقط</a>
+    <a href="<%= buildUrl({ hidden: null }) %>" class="ajax-sort-link hidden-filter-link" data-hidden-value="all" style="<%= activeHiddenFilter === 'all' ? 'font-weight:bold; color:var(--primary);' : 'color:var(--text-muted);' %>">الكل</a>
+    <a href="<%= buildUrl({ hidden: 'hide' }) %>" class="ajax-sort-link hidden-filter-link" data-hidden-value="hide" style="<%= activeHiddenFilter === 'hide' ? 'font-weight:bold; color:var(--primary);' : 'color:var(--text-muted);' %>">غير المخفية</a>
+    <a href="<%= buildUrl({ hidden: 'only' }) %>" class="ajax-sort-link hidden-filter-link" data-hidden-value="only" style="<%= activeHiddenFilter === 'only' ? 'font-weight:bold; color:var(--primary);' : 'color:var(--text-muted);' %>">المخفية فقط</a>
 </div>
 <% } %>
 <% if (stores.length > 0) { %>
@@ -1711,6 +1711,10 @@ if (catGroupOpen) { %></div><% } %>
             var btn = root.querySelector('[onclick*="\'' + id + '\'"]');
             if (btn) btn.classList.add('open');
         });
+        // Catches a group that wasn't open before this swap (so openIds above
+        // missed it) but has a remembered fold state from an earlier visit —
+        // e.g. a category that just appeared for the first time this session.
+        applyStoredCollapsibleState(root);
         var newDrawer = document.getElementById('archive-drawer');
         if (newDrawer) newDrawer.scrollTop = drawerScrollTop;
         window.scrollTo(0, pageScrollY);
@@ -1751,11 +1755,30 @@ if (catGroupOpen) { %></div><% } %>
             link.dataset.ajaxSortBound = '1';
             link.addEventListener('click', function(e) {
                 e.preventDefault();
+                if (link.classList.contains('hidden-filter-link')) {
+                    try { localStorage.setItem('dukanlist_hidden_filter_<%= listId %>', link.dataset.hiddenValue); } catch (err) {}
+                }
                 navigateAjax(link.href);
             });
         });
     }
     setupAjaxSortLinks();
+
+    // The hidden-items filter (الكل / غير المخفية / المخفية فقط) is a per-list
+    // display preference saved above on each choice. Re-entering the list
+    // without an explicit ?hidden= in the URL (plain link, not a shared one
+    // that deliberately picks a filter) re-applies the last choice instead of
+    // always resetting to "الكل" — runs once, only on a real page load (this
+    // whole script tag is inert on the AJAX swaps that follow).
+    (function () {
+        if (/[?&]hidden=/.test(window.location.search)) return;
+        try {
+            var saved = localStorage.getItem('dukanlist_hidden_filter_<%= listId %>');
+            if (!saved || saved === 'all') return;
+            var link = document.querySelector('.hidden-filter-link[data-hidden-value="' + saved + '"]');
+            if (link) navigateAjax(link.href);
+        } catch (e) {}
+    })();
 
     // Optimistic item actions: buy/cancel/delete/move take the row out of
     // view the instant they're tapped — restore marks its archive row as

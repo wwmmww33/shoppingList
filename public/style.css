@@ -567,6 +567,32 @@ input[type="text"], input[type="email"], input[type="password"], input[type="num
 .undo-toast #undo-buy-btn:hover { background: rgba(255,255,255,0.15); }
 #undo-buy-text { font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* Nearby-tasks panel: pops up on any page when the app is opened/resumed
+   near a saved task's location. Not a blocking modal (no overlay) since
+   it's informational, not something the person necessarily needs to act
+   on immediately. */
+.nearby-tasks-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translate(-50%, 100px);
+  opacity: 0;
+  pointer-events: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  padding: 12px 14px;
+  z-index: 150;
+  width: calc(100vw - 32px);
+  max-width: 360px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.nearby-tasks-panel.open { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.nearby-tasks-header { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 8px; }
+.nearby-task-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); }
+.nearby-task-row:first-of-type { border-top: none; }
+
 .category-header {
   font-size: 0.88rem;
   font-weight: 700;

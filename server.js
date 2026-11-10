@@ -9,6 +9,7 @@ const { attachUser, attachNavLists, requireAuth, requireAdmin } = require('./mid
 const authRoutes = require('./routes/auth');
 const listsRoutes = require('./routes/lists');
 const storesRoutes = require('./routes/stores');
+const tasksRoutes = require('./routes/tasks');
 const adminRoutes = require('./routes/admin');
 
 const app = express();
@@ -36,6 +37,7 @@ app.use(attachNavLists);
 app.use('/', authRoutes);
 app.use('/', requireAuth, listsRoutes);
 app.use('/', requireAuth, storesRoutes);
+app.use('/', requireAuth, tasksRoutes);
 app.use('/', requireAuth, requireAdmin, adminRoutes);
 
 app.use((req, res) => res.status(404).send('الصفحة غير موجودة'));

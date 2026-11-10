@@ -162,6 +162,22 @@ const init = async () => {
   for (const fix of CUSTOM_CATEGORY_ICON_FIXES) {
     await run("UPDATE item_categories SET icon = ?, color = ? WHERE label = ? AND icon = 'package'", [fix.icon, fix.color, fix.label]);
   }
+
+  // Location-based tasks: not shopping, just "remind me when I'm near this
+  // place". Checked client-side only when the app is opened/resumed (see
+  // theme-init.ejs) — a plain web page can't reliably alert in the
+  // background the instant someone walks near a spot, especially on iPhone.
+  await run(`CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER NOT NULL REFERENCES users(id),
+    title TEXT NOT NULL,
+    place_name TEXT,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    is_done INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    done_at DATETIME
+  )`);
 };
 
 module.exports = { db, run, get, all, init };

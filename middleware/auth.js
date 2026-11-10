@@ -30,6 +30,12 @@ const attachNavLists = async (req, res, next) => {
      ORDER BY l.created_at DESC`,
     [req.user.id]
   );
+  // Fed into theme-init.ejs (included on every page) so the nearby-task
+  // check runs app-wide on open/resume, not just on a dedicated tasks page.
+  res.locals.activeTasksForLocationCheck = await all(
+    'SELECT id, title, lat, lng FROM tasks WHERE owner_id = ? AND is_done = 0',
+    [req.user.id]
+  );
   next();
 };
 
