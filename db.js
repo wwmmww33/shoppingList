@@ -170,23 +170,29 @@ const init = async () => {
   // Tasks live at a location first (picked the same way as a shopping store
   // — current position or a map pin — and saved into the SAME `stores`
   // table), then tasks get added under it; a task can move between
-  // locations. This table is brand new and unreleased, so an earlier shape
-  // (free-standing lat/lng, no store_id) found with zero rows is recreated
-  // rather than migrated — a defensive no-op if real rows somehow exist.
-  const existingTasksTable = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'");
-  if (existingTasksTable && !/store_id/.test(existingTasksTable.sql)) {
-    const taskCount = await get('SELECT COUNT(*) AS c FROM tasks');
-    if (taskCount.c === 0) await run('DROP TABLE tasks');
-  }
+  // locations.
   await run(`CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id INTEGER NOT NULL REFERENCES users(id),
-    store_id INTEGER NOT NULL REFERENCES stores(id),
     title TEXT NOT NULL,
     is_done INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     done_at DATETIME
   )`);
+  await safeAlter('ALTER TABLE tasks ADD COLUMN store_id INTEGER REFERENCES stores(id)');
+  // An earlier version of this feature gave each task its own lat/lng
+  // (+ optional place_name) instead of a shared store. Turn any such
+  // leftover row into its own store at that same point, so it keeps the
+  // location it already had instead of losing it — a no-op once every row
+  // has a store_id, and a no-op on a database that never had those columns.
+  const taskColumns = await all('PRAGMA table_info(tasks)');
+  if (taskColumns.some((c) => c.name === 'lat')) {
+    const legacyTasks = await all('SELECT id, lat, lng, place_name FROM tasks WHERE store_id IS NULL AND lat IS NOT NULL');
+    for (const t of legacyTasks) {
+      const { lastID } = await run('INSERT INTO stores (name, lat, lng) VALUES (?, ?, ?)', [t.place_name || 'موقع مهمة', t.lat, t.lng]);
+      await run('UPDATE tasks SET store_id = ? WHERE id = ?', [lastID, t.id]);
+    }
+  }
 };
 
 module.exports = { db, run, get, all, init };
