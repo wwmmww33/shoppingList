@@ -1,4 +1,5 @@
 require('dotenv').config();
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
@@ -15,6 +16,9 @@ const app = express();
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
+// Part of the stylesheet's URL, so a new deploy reaches browsers and any proxy
+// in front of the server instead of them keeping the cached old copy.
+app.locals.styleVersion = fs.statSync(path.join(__dirname, 'public', 'style.css')).mtimeMs.toFixed(0);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());

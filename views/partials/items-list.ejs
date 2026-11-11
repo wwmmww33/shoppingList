@@ -1,6 +1,6 @@
 <%
 // Expects: listId, isOwner, activeItems, archivedItems, stores,
-// availableLists, weekdayNames, itemCategories, customCategoryIcons, redirectTo (optional, defaults to /lists/:id)
+// availableLists, weekdayNames, itemCategories, customCategoryIcons, taxRate, redirectTo (optional, defaults to /lists/:id)
 const baseUrl = typeof redirectTo !== 'undefined' ? redirectTo : ('/lists/' + listId);
 const activeSort = typeof cancelledSort !== 'undefined' ? cancelledSort : 'date';
 const activeHiddenFilter = typeof hiddenFilter !== 'undefined' ? hiddenFilter : 'all';
@@ -123,6 +123,8 @@ function priceQtyLabel(price, qty) {
     return unitPrice.toFixed(3) + ' × ' + effectiveQty + ' = ' + (unitPrice * effectiveQty).toFixed(3);
 }
 %>
+<%# Registered stores for the location check (getKnownStoresFromDOM). %>
+<div id="known-stores" hidden data-stores="<%= JSON.stringify(stores.map(function(s) { return { id: s.id, name: s.name, lat: s.lat, lng: s.lng }; })) %>"></div>
 <div class="card" id="store-locator-trigger" style="display:flex; align-items:center; justify-content:space-between; gap:8px; cursor:pointer;" onclick="toggleStoreLocatorModal()">
     <span style="font-size:0.9rem;"><i data-lucide="map-pin" class="lucide"></i> <span id="store-locator-trigger-text">تحديد موقع التسوق</span></span>
     <i data-lucide="chevron-left" class="lucide"></i>
@@ -524,7 +526,7 @@ activeItems.forEach(function(item) {
                 <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
                 <input type="hidden" name="store_id" class="quick-buy-store">
                 <input type="text" name="brand_detail" placeholder="تفاصيل (اختياري)" style="flex:1 1 120px;">
-                <input type="number" step="0.001" min="0" inputmode="decimal" name="price" placeholder="السعر (اختياري)" style="flex:1 1 100px;">
+                <input type="number" step="0.001" min="0" inputmode="decimal" name="price" placeholder="<%= taxRate ? 'السعر قبل الضريبة' : 'السعر (اختياري)' %>" style="flex:1 1 100px;">
                 <button type="submit" class="btn btn-success btn-sm"><i data-lucide="check" class="lucide"></i> إكمال الشراء</button>
             </form>
             <%
@@ -565,8 +567,12 @@ activeItems.forEach(function(item) {
                     <h3>بيانات العلامة التجارية: <%= item.name %></h3>
                     <button type="button" class="icon-btn" title="إغلاق" onclick="toggleBrandModal(<%= item.id %>)"><i data-lucide="x" class="lucide"></i></button>
                 </div>
-                <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" class="inline-form">
+                <form data-ajax-item-action method="POST" action="/items/<%= item.id %>/buy" class="inline-form" onsubmit="return brandModalSubmitGuard(<%= item.id %>)">
                     <input type="hidden" name="redirect_to" value="<%= redirectTarget %>">
+                    <%# No store field: the purchase takes the current shopping location
+                        (applyCurrentStoreToOpenPanels), or else the past brand's last
+                        store. A note appears only when neither gives a store. %>
+                    <input type="hidden" name="store_id" class="quick-buy-store" id="brand-store-<%= item.id %>">
                     <%# Past brands are offered as buttons in the buy panel (they
                         open this modal pre-filled), so there's no past-brand
                         picker here, just the name field. %>
@@ -575,10 +581,10 @@ activeItems.forEach(function(item) {
                         from a past brand the placeholders are gone, and "0.3"
                         alone doesn't say whether it's a price or a quantity. %>
                     <label class="field">اسم البراند
-                        <input type="text" name="brand_custom" id="brand-custom-<%= item.id %>" placeholder="مثال: المراعي">
+                        <input type="text" name="brand_custom" id="brand-custom-<%= item.id %>" class="pb-name" placeholder="مثال: المراعي">
                     </label>
                     <label class="field">التفاصيل
-                        <input type="text" name="brand_detail" id="brand-detail-<%= item.id %>" placeholder="الحجم/النوع، مثال: كرتون">
+                        <input type="text" name="brand_detail" id="brand-detail-<%= item.id %>" class="pb-detail" placeholder="الحجم/النوع، مثال: كرتون">
                     </label>
                     <div class="qty-picker">
                         <span class="qty-picker-label">عدد الوحدات</span>
@@ -587,32 +593,28 @@ activeItems.forEach(function(item) {
                     </div>
                     <label class="btn btn-outline btn-sm" style="cursor:pointer; flex:0 0 auto; display:inline-flex; align-items:center; gap:4px;">
                         <i data-lucide="camera" class="lucide"></i> التقاط صورة
-                        <input type="file" name="brand_image" class="brand-image-input" accept="image/*" capture="environment" style="display:none;" onchange="previewBrandImage(this, <%= item.id %>)">
+                        <input type="file" name="brand_image" class="planned-brand-file" accept="image/*" capture="environment" style="display:none;" onchange="pickPlannedBrandPhoto(this)">
                     </label>
                     <label class="btn btn-outline btn-sm" style="cursor:pointer; flex:0 0 auto; display:inline-flex; align-items:center; gap:4px;">
                         <i data-lucide="image" class="lucide"></i> من المعرض
-                        <input type="file" name="brand_image" class="brand-image-input" accept="image/*" style="display:none;" onchange="previewBrandImage(this, <%= item.id %>)">
+                        <input type="file" name="brand_image" class="planned-brand-file" accept="image/*" style="display:none;" onchange="pickPlannedBrandPhoto(this)">
                     </label>
-                    <input type="hidden" name="existing_brand_image" id="existing-brand-image-<%= item.id %>" value="">
-                    <img id="brand-image-preview-<%= item.id %>" class="brand-thumb" style="display:none;" alt="معاينة صورة البراند" onclick="openImageLightbox(this.src);">
-                    <span id="brand-image-status-<%= item.id %>" style="display:none; font-size:0.78rem; color: var(--text-muted);"></span>
-                    <button type="button" id="brand-ai-btn-<%= item.id %>" class="btn btn-outline btn-sm" style="display:none;" onclick="analyzeBrandImage(<%= item.id %>);">
-                        <i data-lucide="sparkles" class="lucide"></i> تعبئة تلقائية بالذكاء الاصطناعي
-                    </button>
-                    <span id="brand-ai-status-<%= item.id %>" style="display:none; font-size:0.78rem; color: var(--text-muted);"></span>
-                    <label class="field">المحل
-                        <select name="store_id" class="store-select">
-                            <option value="">بدون تحديد محل</option>
-                            <% stores.forEach(function(s) { %>
-                                <option value="<%= s.id %>" data-lat="<%= s.lat || '' %>" data-lng="<%= s.lng || '' %>"><%= s.name %></option>
-                            <% }) %>
-                        </select>
-                    </label>
-                    <label class="field">سعر الوحدة
+                    <input type="hidden" name="existing_brand_image" id="existing-brand-image-<%= item.id %>" class="pb-existing" value="">
+                    <img id="brand-image-preview-<%= item.id %>" class="brand-thumb pb-preview" style="display:none;" alt="معاينة صورة البراند" onclick="openImageLightbox(this.src);">
+                    <span class="history-sub pb-status" style="flex:1 1 100%;"></span>
+                    <label class="field"><%= taxRate ? 'سعر الوحدة قبل الضريبة' : 'سعر الوحدة' %>
                         <input type="number" step="0.001" min="0" inputmode="decimal" name="price" placeholder="اختياري">
                     </label>
+                    <div class="history-sub brand-store-missing" id="brand-store-missing-<%= item.id %>" style="display:none; flex:1 1 100%;">
+                        لم يتم تحديد المحل —
+                        <button type="button" class="btn btn-outline btn-sm" onclick="toggleStoreLocatorModal()"><i data-lucide="map-pin" class="lucide"></i> تحديد الموقع</button>
+                    </div>
+                    <div class="history-sub" id="brand-added-status-<%= item.id %>" style="flex:1 1 100%; color:var(--success);"></div>
                     <button type="submit" class="btn btn-success btn-sm">تأكيد الشراء</button>
-                    <button type="button" class="btn btn-outline btn-sm" onclick="toggleBrandModal(<%= item.id %>)">إلغاء</button>
+                    <%# Saves this brand as its own purchase and clears the form for the
+                        next one (e.g. two kinds of the same item), staying open. %>
+                    <button type="button" class="btn btn-outline btn-sm pb-submit" onclick="buyAndAddAnotherBrand(<%= item.id %>)"><i data-lucide="plus" class="lucide"></i> حفظ وإضافة براند آخر</button>
+                    <button type="button" class="btn btn-outline btn-sm" id="brand-cancel-<%= item.id %>" onclick="toggleBrandModal(<%= item.id %>)">إلغاء</button>
                 </form>
             </div>
         </div>
@@ -742,6 +744,11 @@ if (catGroupOpen) { %></div><% } %>
             if (el.classList.contains('open')) {
                 if (forceNew) resetBrandModal(id);
                 applyCurrentStoreToOpenPanels();
+                updateBrandStoreNote(id);
+            } else if (el._boughtAnother) {
+                // "حفظ وإضافة براند آخر" already bought it: the row is stale.
+                deferredRefresh = false;
+                refreshItemsListNow();
             }
         }
     }
@@ -1089,7 +1096,9 @@ if (catGroupOpen) { %></div><% } %>
         var status = root.querySelector('.pb-status');
         var nameInput = root.querySelector('.pb-name');
         var detailInput = root.querySelector('.pb-detail');
+        var token = root._photoToken = {};
         compressImageFile(file, 1600, 0.82).then(function(small) {
+            if (root._photoToken !== token) return;
             try { var dt = new DataTransfer(); dt.items.add(small); input.files = dt.files; } catch (e) {}
             var preview = root.querySelector('.pb-preview');
             if (preview) { preview.src = URL.createObjectURL(small); preview.style.display = 'inline-block'; }
@@ -1098,11 +1107,15 @@ if (catGroupOpen) { %></div><% } %>
                 return;
             }
             if (status) status.textContent = 'جاري قراءة البراند ومواصفاته بالذكاء الاصطناعي...';
+            // Confirming mid-read would save the purchase without what's being read.
+            setBrandSubmitDisabled(root, true);
             var fd = new FormData();
             fd.append('brand_image', small);
             return fetch('/brand-image/analyze', { method: 'POST', body: fd })
                 .then(function(res) { return res.json(); })
                 .then(function(data) {
+                    if (root._photoToken !== token) return;
+                    setBrandSubmitDisabled(root, false);
                     var filled = false;
                     if (data && data.brand && !nameInput.value.trim()) { nameInput.value = data.brand; filled = true; }
                     if (data && data.detail && !detailInput.value.trim()) { detailInput.value = data.detail; filled = true; }
@@ -1110,7 +1123,11 @@ if (catGroupOpen) { %></div><% } %>
                         ? 'تمت التعبئة بالذكاء الاصطناعي، يمكنك التعديل'
                         : 'لم يتمكن الذكاء الاصطناعي من قراءة البراند أو مواصفاته من الصورة';
                 });
-        }).catch(function() { if (status) status.textContent = ''; });
+        }).catch(function() {
+            if (root._photoToken !== token) return;
+            setBrandSubmitDisabled(root, false);
+            if (status) status.textContent = 'تعذّر الاتصال بخدمة الذكاء الاصطناعي — يمكنك التعبئة يدويًا';
+        });
     }
 
     // "إضافة غرض" from a photo: shrink it, ask the server's AI for the item's
@@ -1249,45 +1266,6 @@ if (catGroupOpen) { %></div><% } %>
         });
     }
 
-    function previewBrandImage(input, id) {
-        if (!input.files || !input.files[0]) return;
-        // Camera capture and gallery pick are two separate <input> elements
-        // sharing name="brand_image" — clear the other one so a form submit
-        // never carries two files under the same field name at once.
-        var form = input.closest('form');
-        if (form) {
-            form.querySelectorAll('.brand-image-input').forEach(function(other) {
-                if (other !== input) other.value = '';
-            });
-        }
-        var status = document.getElementById('brand-image-status-' + id);
-        if (status) { status.textContent = 'جاري تجهيز الصورة...'; status.style.display = 'inline'; }
-        compressImageFile(input.files[0], 1600, 0.82).then(function(compressed) {
-            try {
-                var dt = new DataTransfer();
-                dt.items.add(compressed);
-                input.files = dt.files;
-            } catch (e) {}
-            if (status) status.style.display = 'none';
-            var img = document.getElementById('brand-image-preview-' + id);
-            if (img) {
-                var reader = new FileReader();
-                reader.onload = function(e) {
-                    img.src = e.target.result;
-                    img.style.display = 'inline-block';
-                };
-                reader.readAsDataURL(compressed);
-            }
-            // A freshly chosen photo always wins over whatever was carried
-            // over from a past brand selection.
-            var existingField = document.getElementById('existing-brand-image-' + id);
-            if (existingField) existingField.value = '';
-
-            var aiBtn = document.getElementById('brand-ai-btn-' + id);
-            if (aiBtn) aiBtn.style.display = 'inline-flex';
-        });
-    }
-
     // A past-brand button in the buy panel: opens the brand modal pre-filled
     // with that profile so the person can confirm it as-is or adjust any field
     // (e.g. today's price) before "تأكيد الشراء". The store is the profile's
@@ -1305,17 +1283,22 @@ if (catGroupOpen) { %></div><% } %>
         qtyInput.value = b.qty !== '' && b.qty !== undefined ? b.qty : '';
         syncQtyChips(qtyInput);
         modal.querySelector('input[name="price"]').value = b.price !== '' && b.price !== undefined ? b.price : '';
-        var storeSelect = modal.querySelector('select[name="store_id"]');
-        if (storeSelect && b.storeId && storeSelect.querySelector('option[value="' + b.storeId + '"]')) storeSelect.value = b.storeId;
+        document.getElementById('brand-store-' + id).value = b.storeId || '';
         if (b.image) {
             // Carried over as the purchase's photo unless a new one is picked
-            // (previewBrandImage clears this field when that happens).
+            // (usePlannedBrandFile clears this field when that happens).
             document.getElementById('existing-brand-image-' + id).value = b.image;
             var img = document.getElementById('brand-image-preview-' + id);
             if (img) { img.src = b.image; img.style.display = 'inline-block'; }
         }
         modal.classList.add('open');
         applyCurrentStoreToOpenPanels();
+        updateBrandStoreNote(id);
+    }
+    function updateBrandStoreNote(id) {
+        var note = document.getElementById('brand-store-missing-' + id);
+        var store = document.getElementById('brand-store-' + id);
+        if (note && store) note.style.display = store.value ? 'none' : 'block';
     }
 
     // Clears the brand modal back to a blank form (name, detail, price, qty,
@@ -1332,60 +1315,76 @@ if (catGroupOpen) { %></div><% } %>
         if (qtyInput) syncQtyChips(qtyInput);
         var priceInput = modal.querySelector('input[name="price"]');
         if (priceInput) priceInput.value = '';
-        var storeSelect = modal.querySelector('select[name="store_id"]');
-        if (storeSelect) storeSelect.value = '';
+        var storeInput = document.getElementById('brand-store-' + id);
+        if (storeInput) storeInput.value = '';
         modal.querySelectorAll('input[name="brand_image"]').forEach(function(inp) { inp.value = ''; });
         var img = document.getElementById('brand-image-preview-' + id);
         if (img) { img.style.display = 'none'; img.src = ''; }
-        ['brand-ai-btn-', 'brand-ai-status-', 'brand-image-status-'].forEach(function(prefix) {
-            var el = document.getElementById(prefix + id);
-            if (el) el.style.display = 'none';
-        });
+        // Drop any photo read still in flight, so it can't fill the next brand.
+        var dialog = modal.querySelector('.modal-dialog');
+        dialog._photoToken = null;
+        setBrandSubmitDisabled(dialog, false);
+        var photoStatus = dialog.querySelector('.pb-status');
+        if (photoStatus) photoStatus.textContent = '';
     }
 
-    // Best-effort AI pre-fill from the photo (brand name + a short detail like
-    // size/variant), run only when the person explicitly asks for it via the
-    // "تعبئة تلقائية" button — never automatically on picking a file. Purely a
-    // suggestion: brand_custom/brand_detail stay normal editable
-    // fields, so anything it fills in can still be corrected or replaced by
-    // hand, and a failed/slow analysis just leaves them blank.
-    function analyzeBrandImage(id) {
-        // Two separate inputs now share name="brand_image" (camera + gallery,
-        // see previewBrandImage) — find whichever one actually has a file,
-        // not just the first in DOM order.
-        var fileInput = Array.from(document.querySelectorAll('#brand-modal-' + id + ' input[name="brand_image"]'))
-            .find(function(inp) { return inp.files && inp.files.length > 0; });
-        var statusEl = document.getElementById('brand-ai-status-' + id);
-        if (!fileInput || !fileInput.files || !fileInput.files[0]) return;
-        if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = 'جارٍ التعرف على البراند بالذكاء الاصطناعي...'; }
-        var fd = new FormData();
-        fd.append('brand_image', fileInput.files[0]);
-        fetch('/brand-image/analyze', { method: 'POST', body: fd })
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                if (!data || (!data.brand && !data.detail)) {
-                    if (statusEl) {
-                        statusEl.textContent = 'تعذّر التعرف على البراند تلقائيًا — يمكنك تعبئته يدويًا.';
-                        setTimeout(function() { statusEl.style.display = 'none'; }, 4000);
-                    }
-                    return;
-                }
-                if (statusEl) statusEl.style.display = 'none';
-                if (data.brand) {
-                    var customInput = document.getElementById('brand-custom-' + id);
-                    if (customInput) customInput.value = data.brand;
-                }
-                if (data.detail) {
-                    var detailInput = document.getElementById('brand-detail-' + id);
-                    if (detailInput) detailInput.value = data.detail;
-                }
+    // "حفظ وإضافة براند آخر": records this brand as its own purchase (a normal
+    // /buy, so the item also counts as bought) and clears the form for the
+    // next brand, keeping the same store. The list refreshes when the modal
+    // closes (toggleBrandModal).
+    function buyAndAddAnotherBrand(id) {
+        var modal = document.getElementById('brand-modal-' + id);
+        var form = modal.querySelector('form');
+        var dialog = modal.querySelector('.modal-dialog');
+        var status = document.getElementById('brand-added-status-' + id);
+        var name = form.querySelector('.pb-name').value.trim();
+        var detail = form.querySelector('.pb-detail').value.trim();
+        if (brandModalIsEmpty(form)) {
+            status.textContent = 'أدخل بيانات البراند أولًا';
+            return;
+        }
+        var priceRaw = form.querySelector('input[name="price"]').value;
+        var qtyRaw = form.querySelector('input[name="purchased_qty"]').value;
+        var hasFile = Array.from(form.querySelectorAll('input[type="file"]')).some(function(f) { return f.files && f.files.length > 0; });
+        var storeInput = document.getElementById('brand-store-' + id);
+        setBrandSubmitDisabled(dialog, true);
+        fetch(form.action, { method: 'POST', body: hasFile ? new FormData(form) : new URLSearchParams(new FormData(form)) })
+            .then(function(res) { if (!res.ok) throw new Error('HTTP ' + res.status); })
+            .then(function() {
+                handleBuySuccess(priceRaw !== '' ? Number(priceRaw) : null, qtyRaw !== '' ? Number(qtyRaw) : null);
+                var store = storeInput.value;
+                resetBrandModal(id);
+                storeInput.value = store;
+                modal._boughtAnother = true;
+                modal._savedBrands = (modal._savedBrands || []).concat(name || detail || 'بدون اسم');
+                status.textContent = '✓ تم حفظ: ' + modal._savedBrands.join('، ') + ' — أدخل البراند التالي';
+                document.getElementById('brand-cancel-' + id).textContent = 'إنهاء';
+                form.querySelector('.pb-name').focus();
             })
             .catch(function() {
-                if (statusEl) {
-                    statusEl.textContent = 'تعذّر الاتصال بخدمة الذكاء الاصطناعي — يمكنك التعبئة يدويًا.';
-                    setTimeout(function() { statusEl.style.display = 'none'; }, 4000);
-                }
+                setBrandSubmitDisabled(dialog, false);
+                status.textContent = 'تعذّر الحفظ — تحقق من الاتصال وحاول مرة أخرى';
             });
+    }
+    function brandModalIsEmpty(form) {
+        return !form.querySelector('.pb-name').value.trim() &&
+            !form.querySelector('.pb-detail').value.trim() &&
+            !form.querySelector('input[name="price"]').value.trim() &&
+            !form.querySelector('.pb-existing').value &&
+            !Array.from(form.querySelectorAll('input[type="file"]')).some(function(f) { return f.files && f.files.length > 0; });
+    }
+    // After "حفظ وإضافة براند آخر", confirming the now-empty form just finishes
+    // instead of recording a blank extra purchase.
+    function brandModalSubmitGuard(id) {
+        var modal = document.getElementById('brand-modal-' + id);
+        if (modal._boughtAnother && brandModalIsEmpty(modal.querySelector('form'))) {
+            toggleBrandModal(id);
+            return false;
+        }
+        return true;
+    }
+    function setBrandSubmitDisabled(root, disabled) {
+        root.querySelectorAll('button[type="submit"], .pb-submit').forEach(function(b) { b.disabled = disabled; });
     }
 
     function haversineKm(lat1, lon1, lat2, lon2) {
@@ -1397,28 +1396,6 @@ if (catGroupOpen) { %></div><% } %>
             Math.sin(dLon / 2) * Math.sin(dLon / 2);
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
-    function sortStoresByDistance(lat, lng) {
-        document.querySelectorAll('.store-select').forEach(function(select) {
-            var opts = Array.from(select.querySelectorAll('option[value]:not([value=""])'));
-            opts.sort(function(a, b) {
-                var aLat = parseFloat(a.getAttribute('data-lat')), aLng = parseFloat(a.getAttribute('data-lng'));
-                var bLat = parseFloat(b.getAttribute('data-lat')), bLng = parseFloat(b.getAttribute('data-lng'));
-                var aHas = !isNaN(aLat) && !isNaN(aLng);
-                var bHas = !isNaN(bLat) && !isNaN(bLng);
-                if (!aHas && !bHas) return 0;
-                if (!aHas) return 1;
-                if (!bHas) return -1;
-                return haversineKm(lat, lng, aLat, aLng) - haversineKm(lat, lng, bLat, bLng);
-            });
-            opts.forEach(function(o) { select.appendChild(o); });
-        });
-    }
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(function(pos) {
-            sortStoresByDistance(pos.coords.latitude, pos.coords.longitude);
-        }, function() {}, { timeout: 4000 });
-    }
-
     // "Current store" locator: remembers (per-browser, via localStorage) which
     // store the person is shopping at right now, suggested from their live
     // location against the stores already registered with a lat/lng, and
@@ -1427,16 +1404,13 @@ if (catGroupOpen) { %></div><% } %>
     var STORE_NEAR_RADIUS_KM = 0.3;
 
     function getKnownStoresFromDOM() {
-        var select = document.querySelector('.store-select');
-        if (!select) return [];
-        return Array.from(select.querySelectorAll('option[value]:not([value=""])')).map(function(o) {
-            return {
-                id: o.value,
-                name: o.textContent.trim(),
-                lat: parseFloat(o.getAttribute('data-lat')),
-                lng: parseFloat(o.getAttribute('data-lng'))
-            };
-        });
+        var el = document.getElementById('known-stores');
+        if (!el) return [];
+        try {
+            return JSON.parse(el.getAttribute('data-stores')).map(function(s) {
+                return { id: String(s.id), name: s.name, lat: parseFloat(s.lat), lng: parseFloat(s.lng) };
+            });
+        } catch (e) { return []; }
     }
 
     function getSavedCurrentStore() {
@@ -1463,7 +1437,10 @@ if (catGroupOpen) { %></div><% } %>
 
     function toggleStoreLocatorModal() {
         var el = document.getElementById('store-locator-modal');
-        if (el) el.classList.toggle('open');
+        if (!el) return;
+        // Closing without answering an automatic suggestion counts as "no".
+        if (el.classList.contains('open') && locatorSuggestedStoreId) dismissStoreLocator();
+        else el.classList.toggle('open');
     }
 
     function hideStoreLocatorPanels() {
@@ -1471,16 +1448,59 @@ if (catGroupOpen) { %></div><% } %>
         if (el) el.style.display = 'none';
     }
 
+    // Automatic suggestions (opening/returning to the app) stay quiet for a
+    // while once refused, so the same store isn't offered on every return.
+    var LOCATOR_DISMISS_KEY = 'dukanlist_store_suggestion_dismissed';
+    var LOCATOR_DISMISS_MS = 30 * 60 * 1000;
+    var locatorSuggestedStoreId = null;
+    function suggestionWasDismissed(storeId) {
+        try {
+            var d = JSON.parse(localStorage.getItem(LOCATOR_DISMISS_KEY) || 'null');
+            return !!d && String(d.id) === String(storeId) && Date.now() - d.at < LOCATOR_DISMISS_MS;
+        } catch (e) { return false; }
+    }
+    function closeAutoOpenedLocator() {
+        if (!locatorSuggestedStoreId) return;
+        locatorSuggestedStoreId = null;
+        var el = document.getElementById('store-locator-modal');
+        if (el) el.classList.remove('open');
+    }
     function dismissStoreLocator() {
+        if (locatorSuggestedStoreId) {
+            try { localStorage.setItem(LOCATOR_DISMISS_KEY, JSON.stringify({ id: locatorSuggestedStoreId, at: Date.now() })); } catch (e) {}
+        }
         hideStoreLocatorPanels();
+        closeAutoOpenedLocator();
+    }
+
+    // The saved current store never expires on its own, so yesterday's store
+    // would still show today: drop it once the location proves the person left.
+    // The wider radius and the GPS accuracy margin keep a weak signal inside a
+    // large store from clearing it mid-trip. A store without coordinates can't
+    // be checked and stays until cancelled by hand.
+    var STORE_LEFT_RADIUS_KM = 0.5;
+    function forgetCurrentStoreIfLeft(lat, lng, accuracyMeters) {
+        var saved = getSavedCurrentStore();
+        if (!saved || !saved.id) return;
+        var store = getKnownStoresFromDOM().filter(function(s) { return s.id === String(saved.id); })[0];
+        if (!store || isNaN(store.lat) || isNaN(store.lng)) return;
+        var marginKm = (accuracyMeters || 0) / 1000;
+        if (haversineKm(lat, lng, store.lat, store.lng) - marginKm > STORE_LEFT_RADIUS_KM) clearCurrentStore();
     }
 
     // Lists every registered store within range (not just the nearest one) —
     // more than one store can share essentially the same spot (a mall, a
     // row of shops), so the person picks which one they're actually in.
+    //
+    // reason 'auto' / 'gap' = checked without being asked: stays silent unless
+    // a registered store is nearby and it isn't already the current one, and
+    // then opens the popup itself. Never interrupts an open panel or popup
+    // (returning from the camera while adding an item, for instance).
     function refreshStoreLocation(reason) {
         if (!navigator.geolocation) return;
-        hideStoreLocatorPanels();
+        var isAuto = reason === 'auto' || reason === 'gap';
+        if (isAuto && hasOpenInteraction()) return;
+        if (!isAuto) hideStoreLocatorPanels();
         navigator.geolocation.getCurrentPosition(function(pos) {
             var lat = pos.coords.latitude, lng = pos.coords.longitude;
             var candidates = getKnownStoresFromDOM()
@@ -1488,6 +1508,15 @@ if (catGroupOpen) { %></div><% } %>
                 .map(function(s) { return { store: s, dist: haversineKm(lat, lng, s.lat, s.lng) }; })
                 .filter(function(c) { return c.dist <= STORE_NEAR_RADIUS_KM; })
                 .sort(function(a, b) { return a.dist - b.dist; });
+
+            if (isAuto) {
+                if (hasOpenInteraction()) return;
+                forgetCurrentStoreIfLeft(lat, lng, pos.coords.accuracy);
+                if (candidates.length === 0) return;
+                var current = getSavedCurrentStore();
+                var alreadyThere = current && candidates.some(function(c) { return String(c.store.id) === String(current.id); });
+                if (alreadyThere || suggestionWasDismissed(candidates[0].store.id)) return;
+            }
 
             var latEl = document.getElementById('store-locator-lat');
             var lngEl = document.getElementById('store-locator-lng');
@@ -1528,7 +1557,11 @@ if (catGroupOpen) { %></div><% } %>
 
             var sugEl = document.getElementById('store-locator-suggestion');
             if (sugEl) sugEl.style.display = 'block';
-        }, function() {}, { timeout: 8000 });
+            if (isAuto) {
+                locatorSuggestedStoreId = candidates[0].store.id;
+                document.getElementById('store-locator-modal').classList.add('open');
+            }
+        }, function() {}, { timeout: 8000, maximumAge: 0 });
     }
 
     function confirmCurrentStore(store) {
@@ -1538,26 +1571,29 @@ if (catGroupOpen) { %></div><% } %>
         hideStoreLocatorPanels();
         renderStoreLocatorState();
         applyCurrentStoreToOpenPanels();
+        closeAutoOpenedLocator();
+        // A brand modal waiting for a store (its "لم يتم تحديد المحل" note).
+        document.querySelectorAll('[id^="brand-store-missing-"]').forEach(function(note) {
+            updateBrandStoreNote(note.id.replace('brand-store-missing-', ''));
+        });
     }
 
     function clearCurrentStore() {
         try { localStorage.removeItem(STORE_LOCATOR_KEY); } catch (e) {}
+        document.querySelectorAll('.quick-buy-store').forEach(function(input) { input.value = ''; });
         renderStoreLocatorState();
     }
 
-    // Coming back to the app after being away for a while (phone locked, tab
-    // switched away, ...) often means the person has moved — e.g. finished
-    // shopping at one store and driven to the next. Re-checks location as
-    // soon as the page is visible again, same suggestion panel as the
-    // in-shopping gap check below, but triggered by returning to the app
-    // rather than by a purchase — so it also helps before the first buy.
-    var APP_RESUME_GAP_MS = 5 * 60 * 1000;
+    // Opening the app (end of this script) or coming back to it re-checks the
+    // location: the person may have walked into a registered store. The short
+    // minimum ignores brief switches away.
+    var APP_RESUME_GAP_MS = 30 * 1000;
     var lastHiddenAt = null;
     document.addEventListener('visibilitychange', function() {
         if (document.visibilityState === 'hidden') {
             lastHiddenAt = Date.now();
         } else if (document.visibilityState === 'visible' && lastHiddenAt) {
-            if (Date.now() - lastHiddenAt > APP_RESUME_GAP_MS) refreshStoreLocation('gap');
+            if (Date.now() - lastHiddenAt > APP_RESUME_GAP_MS) refreshStoreLocation('auto');
             lastHiddenAt = null;
         }
     });
@@ -1635,11 +1671,6 @@ if (catGroupOpen) { %></div><% } %>
     function applyCurrentStoreToOpenPanels() {
         var saved = getSavedCurrentStore();
         if (!saved || !saved.id) return;
-        document.querySelectorAll('.store-select').forEach(function(select) {
-            if (select.querySelector('option[value="' + saved.id + '"]')) {
-                select.value = saved.id;
-            }
-        });
         document.querySelectorAll('.quick-buy-store').forEach(function(input) {
             input.value = saved.id;
         });
@@ -1666,7 +1697,7 @@ if (catGroupOpen) { %></div><% } %>
 
     renderStoreLocatorState();
     renderShoppingSessionTotal();
-    if (!getSavedCurrentStore()) refreshStoreLocation();
+    refreshStoreLocation('auto');
     setupNameAutocompletes();
     setupCategoryAI();
 
@@ -1798,10 +1829,7 @@ if (catGroupOpen) { %></div><% } %>
     // person, idle or not (a modal is meant to close once its action
     // completes, so its 'open' state isn't preserved across a refresh).
     function hasOpenInteraction() {
-        if (document.querySelector('.buy-panel.open, .edit-panel.open, .move-panel.open, .modal-overlay.open')) return true;
-        var suggestion = document.getElementById('store-locator-suggestion');
-        if (suggestion && suggestion.style.display !== 'none') return true;
-        return false;
+        return !!document.querySelector('.buy-panel.open, .edit-panel.open, .move-panel.open, .modal-overlay.open');
     }
     function canAutoRefresh() {
         return document.visibilityState === 'visible' && optimisticInflight === 0 && !userIsActive() && !hasOpenInteraction();

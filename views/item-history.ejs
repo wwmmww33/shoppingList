@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>سجل شراء <%= item.name %> - قوائمنا</title>
-    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/style.css?v=<%= styleVersion %>">
     <%- include('partials/theme-init') %>
 </head>
 <body>
@@ -89,6 +89,7 @@
                     cheapestId = priced.reduce((min, p) => (p.price < min.price ? p : min), priced[0]).id;
                 }
                 %>
+                <% const hasTax = purchases.some(p => p.tax_rate !== null); %>
                 <table class="history-table">
                     <thead>
                         <tr>
@@ -98,7 +99,8 @@
                             <th>التفاصيل</th>
                             <th>سعر الوحدة</th>
                             <th>الكمية</th>
-                            <th>الإجمالي</th>
+                            <th><%= hasTax ? 'الإجمالي قبل الضريبة' : 'الإجمالي' %></th>
+                            <% if (hasTax) { %><th>الضريبة</th><th>النهائي</th><% } %>
                             <th>بواسطة</th>
                             <th></th>
                         </tr>
@@ -120,11 +122,15 @@
                                 <td data-label="التفاصيل"><%= p.brand_detail || '-' %></td>
                                 <td data-label="سعر الوحدة"><%= p.price !== null ? Number(p.price).toFixed(3) : '-' %></td>
                                 <td data-label="الكمية"><%= p.purchased_qty !== null ? p.purchased_qty : '1 (افتراضي)' %></td>
-                                <td data-label="الإجمالي"><%= p.price !== null ? (Number(p.price) * (p.purchased_qty !== null ? p.purchased_qty : 1)).toFixed(3) : '-' %></td>
+                                <td data-label="<%= hasTax ? 'الإجمالي قبل الضريبة' : 'الإجمالي' %>"><%= p.price !== null ? p.subtotal.toFixed(3) : '-' %></td>
+                                <% if (hasTax) { %>
+                                    <td data-label="الضريبة"><%= p.price === null || p.tax_rate === null ? '-' : (p.tax_rate === 0 ? 'معفى' : p.tax.toFixed(3) + ' (' + p.tax_rate + '%)') %></td>
+                                    <td data-label="النهائي"><%= p.price !== null ? p.finalTotal.toFixed(3) : '-' %></td>
+                                <% } %>
                                 <td data-label="بواسطة"><%= p.buyer_name || 'مستخدم سابق' %></td>
                                 <td class="history-actions">
                                     <button type="button" class="icon-btn" title="تعديل"
-                                        onclick="openEditPurchaseModal(<%= JSON.stringify({ id: p.id, storeId: p.store_id || '', brand: p.brand || '', detail: p.brand_detail || '', price: p.price !== null ? p.price : '', qty: p.purchased_qty !== null ? p.purchased_qty : '', date: String(p.bought_at || '').slice(0, 10), time: String(p.bought_at || '').slice(11, 16), image: p.brand_image || '' }) %>)">
+                                        onclick="openEditPurchaseModal(<%= JSON.stringify({ id: p.id, storeId: p.store_id || '', brand: p.brand || '', detail: p.brand_detail || '', price: p.price !== null ? p.price : '', qty: p.purchased_qty !== null ? p.purchased_qty : '', taxRate: p.tax_rate !== null ? p.tax_rate : '', date: String(p.bought_at || '').slice(0, 10), time: String(p.bought_at || '').slice(11, 16), image: p.brand_image || '' }) %>)">
                                         <i data-lucide="pencil" class="lucide"></i>
                                     </button>
                                 </td>

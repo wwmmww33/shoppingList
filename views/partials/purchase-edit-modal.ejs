@@ -2,7 +2,7 @@
   Shared "edit a past purchase" modal, used by both an item's own history
   page and the list page's "سجل الشراء السابق" modal. Expects `stores` and
   `redirectTo` (where to land after saving/deleting); opened via
-  openEditPurchaseModal({ id, storeId, brand, detail, price, qty, date, time, image }).
+  openEditPurchaseModal({ id, storeId, brand, detail, price, qty, taxRate, date, time, image }).
 %>
 <div class="modal-overlay" id="edit-purchase-overlay" onclick="if (event.target === this) toggleEditPurchaseModal()">
     <div class="modal-dialog">
@@ -28,6 +28,9 @@
             </label>
             <label class="field">سعر الوحدة
                 <input type="number" step="0.001" min="0" inputmode="decimal" name="price" id="edit-purchase-price" placeholder="اختياري">
+            </label>
+            <label class="field">نسبة الضريبة % (0 = معفى)
+                <input type="number" step="0.01" min="0" max="100" inputmode="decimal" name="tax_rate" id="edit-purchase-tax" placeholder="بدون ضريبة">
             </label>
             <div class="qty-picker">
                 <span class="qty-picker-label">الكمية</span>
@@ -80,6 +83,7 @@
         document.getElementById('edit-purchase-detail').value = p.detail || '';
         document.getElementById('edit-purchase-price').value = p.price;
         document.getElementById('edit-purchase-qty').value = p.qty;
+        document.getElementById('edit-purchase-tax').value = p.taxRate;
         syncQtyChips(document.getElementById('edit-purchase-qty'));
         document.getElementById('edit-purchase-date').value = p.date || '';
         document.getElementById('edit-purchase-time').value = p.time || '';

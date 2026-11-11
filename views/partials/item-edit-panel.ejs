@@ -29,6 +29,9 @@
             <option value="<%= idx %>" <%= item.weekly_weekday === idx ? 'selected' : '' %>><%= name %></option>
         <% }) %>
     </select>
+    <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; white-space:nowrap;">
+        <input type="checkbox" name="tax_exempt" <%= item.tax_exempt ? 'checked' : '' %>> معفى من الضريبة
+    </label>
     <%# Specified brand: set, change or clear (empty name + specs removes it).
         Same field names as the add-item modal; a new photo is uploaded with
         the form (multipart), otherwise the current one is kept unless removed. %>

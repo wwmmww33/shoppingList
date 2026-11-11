@@ -113,6 +113,13 @@ const init = async () => {
   await safeAlter('ALTER TABLE item_purchases ADD COLUMN brand_detail TEXT');
   await safeAlter('ALTER TABLE item_purchases ADD COLUMN brand_image TEXT');
   await safeAlter('ALTER TABLE item_purchases ADD COLUMN purchased_qty REAL');
+  // Tax: a list's rate (NULL = no tax), items exempt from it, and the rate each
+  // purchase was actually recorded with, so changing the list's rate later
+  // doesn't rewrite history (NULL = no tax info, 0 = exempt). Prices are stored
+  // before tax.
+  await safeAlter('ALTER TABLE lists ADD COLUMN tax_rate REAL');
+  await safeAlter('ALTER TABLE list_items ADD COLUMN tax_exempt INTEGER NOT NULL DEFAULT 0');
+  await safeAlter('ALTER TABLE item_purchases ADD COLUMN tax_rate REAL');
 
   // One-time backfill: purchases recorded before the brand-matching fix often
   // had the actual brand name typed into "detail" only, leaving "brand"

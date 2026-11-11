@@ -29,7 +29,7 @@
                 <div class="history-day" id="history-day-<%= idx %>" style="<%= idx === 0 ? '' : 'display:none;' %>">
                     <div style="font-weight:600; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
                         <span><%= day.dateLabel %></span>
-                        <% if (day.total > 0) { %><span class="badge">الإجمالي: <%= day.total.toFixed(3) %></span><% } %>
+                        <% if (day.total > 0) { %><span class="badge">الإجمالي: <%= day.total.toFixed(3) %><% if (day.tax > 0) { %> (منها ضريبة <%= day.tax.toFixed(3) %>)<% } %></span><% } %>
                     </div>
                     <% day.items.forEach(function(it) { %>
                         <%
@@ -37,6 +37,9 @@
                         var itPriceLabel = it.price !== null
                             ? (itQty === 1 ? Number(it.price).toFixed(3) : Number(it.price).toFixed(3) + ' × ' + itQty + ' = ' + (it.price * itQty).toFixed(3))
                             : '';
+                        var itTaxLabel = '';
+                        if (it.price !== null && it.taxRate === 0) itTaxLabel = 'معفى من الضريبة';
+                        else if (it.price !== null && it.taxRate > 0) itTaxLabel = 'ضريبة ' + it.taxRate + '%: ' + it.tax.toFixed(3) + ' · النهائي: ' + it.finalTotal.toFixed(3);
                         %>
                         <div class="list-row" style="font-size:0.88rem;">
                             <span>
@@ -47,9 +50,9 @@
                                 <% if (it.storeName) { %>· <%= it.storeName %><% } %>
                             </span>
                             <span style="display:flex; align-items:center; gap:4px;">
-                                <span class="meta"><%= itPriceLabel %></span>
+                                <span class="meta"><%= itPriceLabel %><% if (itTaxLabel) { %><br><%= itTaxLabel %><% } %></span>
                                 <button type="button" class="icon-btn" title="تعديل"
-                                    onclick="openEditPurchaseModal(<%= JSON.stringify({ id: it.purchaseId, storeId: it.storeId || '', brand: it.brand || '', detail: it.detail || '', price: it.price !== null ? it.price : '', qty: it.qty !== null ? it.qty : '', date: String(it.boughtAt || '').slice(0, 10), time: String(it.boughtAt || '').slice(11, 16), image: it.image || '' }) %>)">
+                                    onclick="openEditPurchaseModal(<%= JSON.stringify({ id: it.purchaseId, storeId: it.storeId || '', brand: it.brand || '', detail: it.detail || '', price: it.price !== null ? it.price : '', qty: it.qty !== null ? it.qty : '', taxRate: it.taxRate !== null ? it.taxRate : '', date: String(it.boughtAt || '').slice(0, 10), time: String(it.boughtAt || '').slice(11, 16), image: it.image || '' }) %>)">
                                     <i data-lucide="pencil" class="lucide"></i>
                                 </button>
                             </span>

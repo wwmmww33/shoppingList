@@ -64,6 +64,8 @@ const validExistingBrandImage = (p) =>
 // Sent much larger than the stored 200px thumbnail: at that size the small
 // print (size, weight, variant) is unreadable, so specs never came back.
 const BRAND_AI_MAX_DIM = 768;
+// Saved as the brand name when the photo shows the specs but not the brand.
+const UNKNOWN_BRAND_LABEL = 'غير محدد';
 const analyzeBrandImageWithAI = async (file) => {
   if (!file || !getAIProvider()) return { brand: null, detail: null };
   try {
@@ -73,13 +75,15 @@ const analyzeBrandImageWithAI = async (file) => {
     const result = await askAI({
       prompt:
         'هذه صورة لمنتج أو بطاقة سعر من محل بقالة. استخرج:\n' +
-        '1) brand: اسم البراند/الماركة التجارية كما هو مكتوب.\n' +
+        '1) brand: اسم البراند/الماركة التجارية.\n' +
         '2) detail: مواصفات المنتج المكتوبة عليه باختصار — الحجم أو الوزن أو السعة (مثل 1 لتر، 500 جرام، 12 حبة) ' +
         'والنوع أو النكهة (مثل قليل الدسم، بالفراولة) — بدون تكرار اسم البراند.\n' +
+        'اكتب كل قيمة باللغتين بهذه الصيغة بالضبط: "العربية / English"، مثل "المراعي / Almarai" و"1 لتر قليل الدسم / 1L low fat". ' +
+        'إذا كان مكتوبًا بلغة واحدة فقط فترجمه أو اكتب نطقه باللغة الأخرى.\n' +
         'كل واحد مستقل عن الآخر: إذا ظهرت المواصفات ولم يظهر البراند فأعد المواصفات، والعكس.\n' +
         'أجب فقط بصيغة JSON مضغوطة بدون أي نص آخر: {"brand": "...", "detail": "..."}، وضع null لما لا يظهر.',
       imageBase64: buffer.toString('base64'),
-      maxTokens: 200,
+      maxTokens: 300,
       timeoutMs: 20000,
     });
     if (!result.ok) return { brand: null, detail: null };
@@ -88,7 +92,8 @@ const analyzeBrandImageWithAI = async (file) => {
     if (!match) return { brand: null, detail: null };
     const parsed = JSON.parse(match[0]);
     const clean = (v) => (typeof v === 'string' && v.trim() && v.trim() !== 'null' ? v.trim().slice(0, 120) : null);
-    return { brand: clean(parsed.brand), detail: clean(parsed.detail) };
+    const detail = clean(parsed.detail);
+    return { brand: clean(parsed.brand) || (detail ? UNKNOWN_BRAND_LABEL : null), detail };
   } catch (err) {
     console.error('brand image AI analysis failed:', err.message);
     return { brand: null, detail: null };
@@ -350,13 +355,28 @@ const loadAvailableListsFor = (userId, excludeListId) =>
     [userId, userId, excludeListId]
   );
 
+// A tax percentage typed in a form: blank or out of range means none.
+const parseTaxRate = (raw) => {
+  const text = String(raw || '').trim();
+  const rate = Number(text);
+  return text !== '' && Number.isFinite(rate) && rate >= 0 && rate <= 100 ? Math.round(rate * 100) / 100 : null;
+};
+
+// A purchase's amounts: price is one unit before tax, quantity defaults to 1.
+const purchaseAmounts = (price, qty, taxRate) => {
+  if (price === null) return { subtotal: null, tax: null, finalTotal: null };
+  const subtotal = price * (qty !== null ? qty : 1);
+  const tax = taxRate > 0 ? Math.round(subtotal * taxRate * 10) / 1000 : 0;
+  return { subtotal, tax, finalTotal: subtotal + tax };
+};
+
 // Every past purchase recorded under this specific list, grouped by calendar
 // day (most recent day first) — a shopping-trip log shown at the top of the
 // list page, separate from any single item's own "سجل الشراء" page.
 const loadShoppingHistoryByDate = async (listId) => {
   const rows = await all(
     `SELECT substr(ip.bought_at, 1, 10) AS date, ip.id, ip.store_id, ip.brand_image, li.name AS item_name, ip.brand, ip.brand_detail,
-            ip.price, ip.purchased_qty, s.name AS store_name, ip.bought_at
+            ip.price, ip.purchased_qty, ip.tax_rate, s.name AS store_name, ip.bought_at
      FROM item_purchases ip
      JOIN list_items li ON li.id = ip.item_id
      LEFT JOIN stores s ON s.id = ip.store_id
@@ -380,15 +400,18 @@ const loadShoppingHistoryByDate = async (listId) => {
       detail: r.brand_detail,
       price: r.price,
       qty: r.purchased_qty,
+      taxRate: r.tax_rate,
+      ...purchaseAmounts(r.price, r.purchased_qty, r.tax_rate),
       storeName: r.store_name,
       boughtAt: r.bought_at,
     });
   });
-  // price is always a single unit's price — quantity defaults to 1 when not
-  // given — so each day's total is the sum of price × qty across its items.
+  // Each day's total is what was actually paid: the sum of its items' amounts
+  // after tax, with the tax part kept separately for display.
   byDate.forEach((day) => {
     day.dateLabel = formatDateArabic(day.date);
-    day.total = day.items.reduce((sum, it) => (it.price !== null ? sum + it.price * (it.qty !== null ? it.qty : 1) : sum), 0);
+    day.total = day.items.reduce((sum, it) => sum + (it.finalTotal || 0), 0);
+    day.tax = day.items.reduce((sum, it) => sum + (it.tax || 0), 0);
   });
   return byDate;
 };
@@ -547,6 +570,13 @@ router.post('/lists/:id/rename', requireListAccess, async (req, res) => {
   res.redirect(`/lists/${req.list.id}`);
 });
 
+router.post('/lists/:id/tax-rate', requireListAccess, async (req, res) => {
+  if (!req.isListOwner) return res.status(403).send('غير مصرح');
+  // 0 or blank both turn tax off for new purchases.
+  await run('UPDATE lists SET tax_rate = ? WHERE id = ?', [parseTaxRate(req.body.tax_rate) || null, req.list.id]);
+  res.redirect(`/lists/${req.list.id}`);
+});
+
 router.post('/lists/:id/delete', requireListAccess, async (req, res) => {
   if (!req.isListOwner) return res.status(403).send('غير مصرح');
   const itemIds = (await all('SELECT id FROM list_items WHERE list_id = ?', [req.list.id])).map((r) => r.id);
@@ -593,10 +623,12 @@ router.post('/lists/:id/items', requireListAccess, uploadBrandImage, async (req,
   const planned = readPlannedBrand(req.body);
   // The photo only matters when a brand was actually specified.
   const plannedImage = planned.brand || planned.detail ? await saveBrandImage(req.file) : null;
+  // Adding an item again keeps its exemption, so it isn't silently taxed.
+  const previous = await get('SELECT tax_exempt FROM list_items WHERE list_id = ? AND name = ? ORDER BY id DESC LIMIT 1', [req.list.id, name]);
 
   await run(
-    'INSERT INTO list_items (list_id, name, quantity, unit, category, is_weekly, weekly_weekday, planned_store_id, details, planned_brand, planned_brand_detail, planned_brand_image, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [req.list.id, name, quantity, unit, category, isWeekly, weekday, plannedStoreId, details, planned.brand, planned.detail, plannedImage, req.user.id]
+    'INSERT INTO list_items (list_id, name, quantity, unit, category, is_weekly, weekly_weekday, planned_store_id, details, planned_brand, planned_brand_detail, planned_brand_image, tax_exempt, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [req.list.id, name, quantity, unit, category, isWeekly, weekday, plannedStoreId, details, planned.brand, planned.detail, plannedImage, previous ? previous.tax_exempt : 0, req.user.id]
   );
   res.redirect(req.body.redirect_to || `/lists/${req.list.id}`);
 });
@@ -830,7 +862,7 @@ router.post('/lists/:id/categories/apply-suggestion', requireListAccess, async (
 router.post('/items/:itemId/buy', uploadBrandImage, async (req, res) => {
   const ctx = await getItemWithAccess(req);
   if (!ctx) return res.status(404).send('غير موجود');
-  const { item } = ctx;
+  const { item, list } = ctx;
 
   const storeId = req.body.store_id ? Number(req.body.store_id) : null;
   // brand_select is a flag ("__custom__" from the brand modal, whether opened
@@ -850,9 +882,11 @@ router.post('/items/:itemId/buy', uploadBrandImage, async (req, res) => {
   const qtyRaw = (req.body.purchased_qty || '').trim();
   const purchasedQty = qtyRaw !== '' && Number.isFinite(Number(qtyRaw)) && Number(qtyRaw) > 0 ? Number(qtyRaw) : null;
 
+  const taxRate = list.tax_rate ? (item.tax_exempt ? 0 : list.tax_rate) : null;
+
   await run(
-    'INSERT INTO item_purchases (item_id, store_id, brand, brand_detail, brand_image, price, purchased_qty, bought_by, bought_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [item.id, storeId, brand, brandDetail, brandImage, price, purchasedQty, req.user.id, nowOmanString()]
+    'INSERT INTO item_purchases (item_id, store_id, brand, brand_detail, brand_image, price, purchased_qty, tax_rate, bought_by, bought_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [item.id, storeId, brand, brandDetail, brandImage, price, purchasedQty, taxRate, req.user.id, nowOmanString()]
   );
 
   if (item.is_weekly && item.weekly_weekday !== null) {
@@ -955,8 +989,8 @@ router.post('/items/:itemId/copy', async (req, res) => {
   // exactly where it was, untouched.
   const { item } = ctx;
   await run(
-    'INSERT INTO list_items (list_id, name, quantity, unit, category, is_weekly, weekly_weekday, planned_store_id, details, planned_brand, planned_brand_detail, planned_brand_image, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [targetListId, item.name, item.quantity, item.unit, item.category, item.is_weekly, item.weekly_weekday, item.planned_store_id, item.details, item.planned_brand, item.planned_brand_detail, item.planned_brand_image, req.user.id]
+    'INSERT INTO list_items (list_id, name, quantity, unit, category, is_weekly, weekly_weekday, planned_store_id, details, planned_brand, planned_brand_detail, planned_brand_image, tax_exempt, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [targetListId, item.name, item.quantity, item.unit, item.category, item.is_weekly, item.weekly_weekday, item.planned_store_id, item.details, item.planned_brand, item.planned_brand_detail, item.planned_brand_image, item.tax_exempt, req.user.id]
   );
   redirectBackTo(req, res, ctx.item.list_id);
 });
@@ -975,6 +1009,7 @@ router.post('/items/:itemId/edit', uploadBrandImage, async (req, res) => {
   const weekday = isWeekly && req.body.weekly_weekday !== '' ? Number(req.body.weekly_weekday) : null;
   const plannedStoreId = req.body.planned_store_id ? Number(req.body.planned_store_id) : null;
   const details = (req.body.details || '').trim().slice(0, 120) || null;
+  const taxExempt = req.body.tax_exempt === 'on' ? 1 : 0;
   // Specified brand: a new photo replaces the old one, "remove" clears it,
   // otherwise it's kept; clearing both name and specs drops the whole brand.
   const planned = readPlannedBrand(req.body);
@@ -984,8 +1019,8 @@ router.post('/items/:itemId/edit', uploadBrandImage, async (req, res) => {
   }
 
   await run(
-    'UPDATE list_items SET name = ?, quantity = ?, unit = ?, category = ?, is_weekly = ?, weekly_weekday = ?, planned_store_id = ?, details = ?, planned_brand = ?, planned_brand_detail = ?, planned_brand_image = ? WHERE id = ?',
-    [name, quantity, unit, category, isWeekly, weekday, plannedStoreId, details, planned.brand, planned.detail, plannedImage, ctx.item.id]
+    'UPDATE list_items SET name = ?, quantity = ?, unit = ?, category = ?, is_weekly = ?, weekly_weekday = ?, planned_store_id = ?, details = ?, planned_brand = ?, planned_brand_detail = ?, planned_brand_image = ?, tax_exempt = ? WHERE id = ?',
+    [name, quantity, unit, category, isWeekly, weekday, plannedStoreId, details, planned.brand, planned.detail, plannedImage, taxExempt, ctx.item.id]
   );
   redirectBackTo(req, res, ctx.item.list_id);
 });
@@ -1096,6 +1131,7 @@ router.get('/items/:itemId/history', async (req, res) => {
      ORDER BY p.bought_at ${order === 'asc' ? 'ASC' : 'DESC'}, p.id ${order === 'asc' ? 'ASC' : 'DESC'}`,
     [ctx.item.id]
   );
+  purchases.forEach((p) => Object.assign(p, purchaseAmounts(p.price, p.purchased_qty, p.tax_rate)));
   const stores = await all('SELECT * FROM stores ORDER BY name ASC');
   const comparison = buildPriceComparison(purchases);
   res.render('item-history', { item: ctx.item, list: ctx.list, purchases, stores, order, comparison });
@@ -1138,6 +1174,7 @@ router.post('/purchases/:purchaseId/edit', uploadBrandImage, async (req, res) =>
   const price = priceRaw !== '' && Number.isFinite(Number(priceRaw)) ? Math.round(Number(priceRaw) * 1000) / 1000 : null;
   const qtyRaw = (req.body.purchased_qty || '').trim();
   const purchasedQty = qtyRaw !== '' && Number.isFinite(Number(qtyRaw)) && Number(qtyRaw) > 0 ? Number(qtyRaw) : null;
+  const taxRate = parseTaxRate(req.body.tax_rate);
 
   // Date/time are optional overrides: anything missing or malformed keeps
   // the corresponding part of the original timestamp.
@@ -1154,8 +1191,8 @@ router.post('/purchases/:purchaseId/edit', uploadBrandImage, async (req, res) =>
   if (!brandImage) brandImage = req.body.remove_brand_image ? null : purchase.brand_image;
 
   await run(
-    'UPDATE item_purchases SET store_id = ?, brand = ?, brand_detail = ?, brand_image = ?, price = ?, purchased_qty = ?, bought_at = ? WHERE id = ?',
-    [storeId, brand, brandDetail, brandImage, price, purchasedQty, boughtAt, purchase.id]
+    'UPDATE item_purchases SET store_id = ?, brand = ?, brand_detail = ?, brand_image = ?, price = ?, purchased_qty = ?, tax_rate = ?, bought_at = ? WHERE id = ?',
+    [storeId, brand, brandDetail, brandImage, price, purchasedQty, taxRate, boughtAt, purchase.id]
   );
   purchaseRedirect(req, res, item);
 });

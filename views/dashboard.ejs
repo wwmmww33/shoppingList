@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>قوائمي - قوائمنا</title>
-    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/style.css?v=<%= styleVersion %>">
     <%- include('partials/theme-init') %>
 </head>
 <body>
@@ -24,6 +24,7 @@
             </div>
             <div id="items-list-root">
             <%- include('partials/items-list', {
+                taxRate: pinnedList.tax_rate,
                 listId: pinnedList.id,
                 isOwner: pinnedIsOwner,
                 activeItems: pinnedItems.active,

@@ -58,6 +58,7 @@ nav.topnav {
   gap: 10px;
   flex-wrap: wrap;
 }
+nav.topnav .nav-start { display: flex; align-items: center; gap: 10px; }
 nav.topnav .brand { font-weight: bold; color: var(--text); }
 nav.topnav .links { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.92rem; align-items: center; }
 .theme-toggle-btn {
@@ -458,10 +459,10 @@ input[type="text"], input[type="email"], input[type="password"], input[type="num
 .fab {
   position: fixed;
   bottom: 24px;
-  /* Right side, and above the drawers' z-index (101) — the archive drawer
-     (bought/cancelled) slides in from the left and would otherwise sit right
-     on top of this button, making it unreachable while that drawer is open. */
-  right: 20px;
+  /* Left side, and above the drawers' z-index (101) — the archive drawer
+     (bought/cancelled) slides in from the left too and would otherwise sit
+     right on top of this button, making it unreachable while that drawer is open. */
+  left: 20px;
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -488,38 +489,40 @@ input[type="text"], input[type="email"], input[type="password"], input[type="num
 .fab-group {
   position: fixed;
   bottom: 24px;
-  right: 20px;
+  left: 20px;
   z-index: 110;
   display: flex;
   flex-direction: column;
   gap: 14px;
   transition: transform 0.25s ease, opacity 0.25s ease;
 }
-.fab-group.hidden { transform: translateX(110px); opacity: 0; pointer-events: none; }
+.fab-group.hidden { transform: translateX(-110px); opacity: 0; pointer-events: none; }
+/* Room to scroll the last rows clear of the buttons. */
+#items-list-root, .archive-drawer { padding-bottom: 160px; }
 /* Grouped fabs are laid out by the group's own flex column, not individually
    fixed/stacked like a lone .fab (e.g. on the stores page). */
 .fab-group .fab {
   position: static;
   bottom: auto;
-  right: auto;
+  left: auto;
 }
 .fab-handle {
   position: fixed;
   bottom: 24px;
-  right: 0;
+  left: 0;
   width: 24px;
   height: 56px;
-  border-radius: 10px 0 0 10px;
+  border-radius: 0 10px 10px 0;
   background: var(--card);
   border: 1px solid var(--border);
-  border-right: none;
+  border-left: none;
   color: var(--text-muted);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   z-index: 111;
-  box-shadow: -2px 0 8px rgba(0,0,0,0.12);
+  box-shadow: 2px 0 8px rgba(0,0,0,0.12);
 }
 .fab-handle .lucide { width: 1.2em; height: 1.2em; transition: transform 0.25s ease; }
 .fab-handle.collapsed .lucide { transform: rotate(180deg); }
