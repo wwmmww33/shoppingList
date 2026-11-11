@@ -30,6 +30,18 @@ const attachNavLists = async (req, res, next) => {
      ORDER BY l.created_at DESC`,
     [req.user.id]
   );
+  // Fed into theme-init.ejs (included on every page) so the nearby-task
+  // check runs app-wide on open/resume, not just on a dedicated tasks page.
+  // A task's location is its store's — stores without a saved lat/lng
+  // (name-only) just never trigger a nearby check, same as they don't for
+  // the shopping store-locator.
+  res.locals.activeTasksForLocationCheck = await all(
+    `SELECT t.id, t.title, s.lat, s.lng
+     FROM tasks t
+     JOIN stores s ON s.id = t.store_id
+     WHERE t.owner_id = ? AND t.is_done = 0 AND s.lat IS NOT NULL AND s.lng IS NOT NULL`,
+    [req.user.id]
+  );
   next();
 };
 

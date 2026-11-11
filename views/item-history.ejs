@@ -28,8 +28,17 @@
         <div class="card">
             <h3 style="margin:0 0 4px;"><i data-lucide="scale" class="lucide"></i> مقارنة الأسعار</h3>
             <p class="history-sub" style="margin:0 0 10px;">لنفس البراند بنفس التفاصيل — سعر الوحدة بين المحلات ومع الوقت.</p>
+            <% if (comparison.length > 1) { %>
+            <input type="text" id="compare-search" placeholder="بحث عن براند أو تفاصيل..." oninput="filterCompareGroups(this.value)" style="margin-bottom:10px;">
+            <p id="compare-search-empty" style="display:none; color: var(--text-muted);">لا توجد نتائج مطابقة.</p>
+            <% } %>
             <% comparison.forEach(function(g) { %>
-                <div class="compare-group">
+                <%
+                // Matched against on the client (filterCompareGroups below),
+                // not re-escaped through HTML — plain lowercased text only.
+                const searchKey = (String(g.brand || '') + ' ' + String(g.detail || '')).trim();
+                %>
+                <div class="compare-group" data-compare-search="<%= searchKey %>">
                     <div class="compare-title">
                         <strong><%= g.brand || g.detail %></strong>
                         <% if (g.brand && g.detail) { %><span class="history-sub"><%= g.detail %></span><% } %>
@@ -146,5 +155,20 @@
     </div>
 
     <%- include('partials/purchase-edit-modal', { stores: stores, redirectTo: '/items/' + item.id + '/history' + (order === 'asc' ? '?order=asc' : '') }) %>
+
+    <script>
+        function filterCompareGroups(query) {
+            var q = query.trim().toLowerCase();
+            var groups = document.querySelectorAll('.compare-group');
+            var visibleCount = 0;
+            groups.forEach(function(g) {
+                var match = !q || (g.getAttribute('data-compare-search') || '').toLowerCase().indexOf(q) !== -1;
+                g.style.display = match ? '' : 'none';
+                if (match) visibleCount++;
+            });
+            var empty = document.getElementById('compare-search-empty');
+            if (empty) empty.style.display = (q && visibleCount === 0) ? 'block' : 'none';
+        }
+    </script>
 </body>
 </html>

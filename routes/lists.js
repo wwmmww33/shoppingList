@@ -1122,14 +1122,26 @@ router.get('/items/:itemId/history', async (req, res) => {
   // Newest first by default; ?order=asc flips it (the cheapest purchase is
   // still highlighted in the view, whatever the order).
   const order = req.query.order === 'asc' ? 'asc' : 'desc';
+  // Pooled by item NAME across every list this person can access (owner or
+  // shared), not just this one list_items row — the same name-based pooling
+  // attachPastBrands already uses. Re-adding an item (e.g. after a weekly
+  // buy, or by mistake) creates a new row with a fresh id, so scoping to
+  // just ctx.item.id would silently split one product's history/price
+  // comparison across rows that happen to share a name.
   const purchases = await all(
     `SELECT p.*, s.name AS store_name, u.name AS buyer_name
      FROM item_purchases p
+     JOIN list_items li2 ON li2.id = p.item_id
      LEFT JOIN stores s ON s.id = p.store_id
      LEFT JOIN users u ON u.id = p.bought_by
-     WHERE p.item_id = ?
+     WHERE li2.name = ?
+       AND li2.list_id IN (
+         SELECT id FROM lists WHERE owner_id = ?
+         UNION
+         SELECT list_id FROM list_shares WHERE user_id = ?
+       )
      ORDER BY p.bought_at ${order === 'asc' ? 'ASC' : 'DESC'}, p.id ${order === 'asc' ? 'ASC' : 'DESC'}`,
-    [ctx.item.id]
+    [ctx.item.name, req.user.id, req.user.id]
   );
   purchases.forEach((p) => Object.assign(p, purchaseAmounts(p.price, p.purchased_qty, p.tax_rate)));
   const stores = await all('SELECT * FROM stores ORDER BY name ASC');

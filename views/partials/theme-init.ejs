@@ -22,13 +22,41 @@
             }
         } catch (e) {}
     }
+    // Folding a section (a category group, the archive's category groups, ...)
+    // is remembered per section id across full reloads and revisits, not just
+    // within one AJAX-refreshed session — read back by applyStoredCollapsibleState.
+    function saveCollapsibleState(id, open) {
+        try {
+            var store = JSON.parse(localStorage.getItem('dukanlist_collapsible_state') || '{}');
+            store[id] = open;
+            localStorage.setItem('dukanlist_collapsible_state', JSON.stringify(store));
+        } catch (e) {}
+    }
     function toggleCollapsible(id) {
         var body = document.getElementById(id);
         if (!body) return;
         body.classList.toggle('open');
         var btn = document.querySelector('[onclick*="\'' + id + '\'"]');
         if (btn) btn.classList.toggle('open');
+        saveCollapsibleState(id, body.classList.contains('open'));
     }
+    // Re-applies any remembered fold state onto whatever collapsible sections
+    // currently exist under root (the whole page on load, or just the swapped
+    // #items-list-root after an AJAX refresh) — a section with no saved state
+    // keeps whatever the server rendered by default.
+    function applyStoredCollapsibleState(root) {
+        var store;
+        try { store = JSON.parse(localStorage.getItem('dukanlist_collapsible_state') || '{}'); } catch (e) { return; }
+        (root || document).querySelectorAll('.collapsible-body[id]').forEach(function (body) {
+            if (!(body.id in store)) return;
+            var shouldOpen = store[body.id];
+            if (body.classList.contains('open') === shouldOpen) return;
+            body.classList.toggle('open');
+            var btn = document.querySelector('[onclick*="\'' + body.id + '\'"]');
+            if (btn) btn.classList.toggle('open');
+        });
+    }
+    document.addEventListener('DOMContentLoaded', function () { applyStoredCollapsibleState(); });
     function toggleListsDrawer() {
         var drawer = document.getElementById('lists-drawer');
         var overlay = document.getElementById('drawer-overlay');
@@ -71,6 +99,84 @@
     // the default of 1, so the "1" chip shows as selected then — making the
     // default visible instead of implied. Typing a number by hand keeps the
     // matching chip, if any, highlighted.
+    // Location-based tasks ("remind me when I'm near this place") checked
+    // only when the app is opened or brought back to the foreground — a
+    // plain web page can't reliably alert in the background the instant
+    // someone walks near a spot (especially on iPhone), so this piggybacks
+    // on the same moments people already open/return to the app, same as
+    // the shopping store-locator's own resume check.
+    var ACTIVE_TASKS = <%- JSON.stringify(typeof activeTasksForLocationCheck !== 'undefined' ? activeTasksForLocationCheck : []).replace(/</g, '\\u003c') %>;
+    var TASK_NEAR_RADIUS_KM = 0.3;
+    function haversineKmGlobal(lat1, lon1, lat2, lon2) {
+        var R = 6371;
+        var dLat = (lat2 - lat1) * Math.PI / 180;
+        var dLon = (lon2 - lon1) * Math.PI / 180;
+        var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+    function ensureNearbyTasksPanel() {
+        var panel = document.getElementById('nearby-tasks-panel');
+        if (panel) return panel;
+        panel = document.createElement('div');
+        panel.id = 'nearby-tasks-panel';
+        panel.className = 'nearby-tasks-panel';
+        document.body.appendChild(panel);
+        return panel;
+    }
+    function showNearbyTasksPanel(nearby) {
+        var panel = ensureNearbyTasksPanel();
+        panel.innerHTML = '';
+        var header = document.createElement('div');
+        header.className = 'nearby-tasks-header';
+        var title = document.createElement('span');
+        title.innerHTML = '<i data-lucide="map-pin" class="lucide"></i> لديك مهام قريبة من هنا';
+        var closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'icon-btn';
+        closeBtn.innerHTML = '<i data-lucide="x" class="lucide"></i>';
+        closeBtn.onclick = function () { panel.classList.remove('open'); };
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        panel.appendChild(header);
+        nearby.forEach(function (t) {
+            var row = document.createElement('div');
+            row.className = 'nearby-task-row';
+            var span = document.createElement('span');
+            span.textContent = t.title;
+            var doneBtn = document.createElement('button');
+            doneBtn.type = 'button';
+            doneBtn.className = 'btn btn-success btn-sm';
+            doneBtn.innerHTML = '<i data-lucide="check" class="lucide"></i> تم';
+            doneBtn.onclick = function () {
+                fetch('/tasks/' + t.id + '/done', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: '' })
+                    .catch(function () {});
+                row.remove();
+                if (!panel.querySelector('.nearby-task-row')) panel.classList.remove('open');
+            };
+            row.appendChild(span);
+            row.appendChild(doneBtn);
+            panel.appendChild(row);
+        });
+        panel.classList.add('open');
+        renderIcons();
+    }
+    function checkNearbyTasks() {
+        if (!ACTIVE_TASKS.length || !navigator.geolocation) return;
+        navigator.geolocation.getCurrentPosition(function (pos) {
+            var lat = pos.coords.latitude, lng = pos.coords.longitude;
+            var nearby = ACTIVE_TASKS.filter(function (t) {
+                return haversineKmGlobal(lat, lng, t.lat, t.lng) <= TASK_NEAR_RADIUS_KM;
+            });
+            if (nearby.length) showNearbyTasksPanel(nearby);
+        }, function () {}, { timeout: 8000 });
+    }
+    document.addEventListener('DOMContentLoaded', checkNearbyTasks);
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') checkNearbyTasks();
+    });
+
     function pickQty(chip) {
         var picker = chip.closest('.qty-picker');
         var input = picker && picker.querySelector('input');
