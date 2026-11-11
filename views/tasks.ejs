@@ -28,11 +28,12 @@
                     <label class="field">الموقع
                         <select name="store_id" id="task-store-select" onchange="onTaskStoreChange()">
                             <% stores.forEach(function(s) { %>
-                                <option value="<%= s.id %>"><%= s.name %></option>
+                                <option value="<%= s.id %>" data-lat="<%= s.lat || '' %>" data-lng="<%= s.lng || '' %>"><%= s.name %></option>
                             <% }) %>
                             <option value="">+ موقع جديد</option>
                         </select>
                     </label>
+                    <p id="task-nearest-status" style="display:none; font-size:0.8rem; color: var(--text-muted); margin:-6px 0 0;"></p>
                     <div id="new-location-fields" style="display:<%= stores.length === 0 ? 'block' : 'none' %>;">
                         <p class="history-sub" style="margin:0 0 8px;">اضغط على الخريطة لتحديد الموقع الجديد (كبّر الخريطة لتظهر أسماء الأماكن الفعلية عليها)، أو استخدم موقعك الحالي.</p>
                         <div id="task-map"></div>
@@ -146,14 +147,58 @@
             overlay.classList.toggle('open');
             if (opening) {
                 var select = document.getElementById('task-store-select');
+                var statusEl = document.getElementById('task-nearest-status');
+                statusEl.style.display = 'none';
                 if (storeId !== undefined && select.querySelector('option[value="' + storeId + '"]')) {
+                    // Opened from a specific location's own "+" — that choice
+                    // is deliberate, so it's kept as-is rather than overridden
+                    // by whatever turns out to be nearest.
                     select.value = String(storeId);
-                } else if (select.options.length > 0) {
-                    select.selectedIndex = 0;
+                    onTaskStoreChange();
+                } else {
+                    if (select.options.length > 0) select.selectedIndex = 0;
+                    onTaskStoreChange();
+                    pickNearestLocationForTask();
                 }
-                onTaskStoreChange();
                 document.getElementById('task-title-input').focus();
             }
+        }
+        // Opened from the page's main "+" (no location already chosen): picks
+        // the closest saved location to where the person is standing right
+        // now, the same 300m "close enough" radius the shopping store-locator
+        // uses — or, if nothing saved is that close, switches straight to
+        // "+ موقع جديد" with the current position already pinned, so adding a
+        // brand new location needs just a name instead of a second button tap.
+        var TASK_PICK_RADIUS_KM = 0.3;
+        function pickNearestLocationForTask() {
+            if (!navigator.geolocation) return;
+            var select = document.getElementById('task-store-select');
+            var statusEl = document.getElementById('task-nearest-status');
+            navigator.geolocation.getCurrentPosition(function(pos) {
+                var lat = pos.coords.latitude, lng = pos.coords.longitude;
+                var nearest = null;
+                Array.from(select.options).forEach(function(opt) {
+                    var oLat = parseFloat(opt.getAttribute('data-lat'));
+                    var oLng = parseFloat(opt.getAttribute('data-lng'));
+                    if (isNaN(oLat) || isNaN(oLng)) return;
+                    var dist = haversineKmGlobal(lat, lng, oLat, oLng);
+                    if (!nearest || dist < nearest.dist) nearest = { opt: opt, dist: dist };
+                });
+                if (nearest && nearest.dist <= TASK_PICK_RADIUS_KM) {
+                    select.value = nearest.opt.value;
+                    onTaskStoreChange();
+                    statusEl.textContent = 'أقرب موقع محفوظ: ' + nearest.opt.textContent + ' — تم اختياره تلقائيًا (يمكنك تغييره).';
+                    statusEl.style.display = 'block';
+                } else {
+                    select.value = '';
+                    onTaskStoreChange();
+                    placeTaskMarker(lat, lng);
+                    taskMap.setView([lat, lng], 17);
+                    suggestTaskPlaceName(lat, lng);
+                    statusEl.textContent = 'لا يوجد موقع محفوظ قريب منك — تم تحديد موقعك الحالي كموقع جديد، فقط أضف له اسمًا.';
+                    statusEl.style.display = 'block';
+                }
+            }, function() {}, { timeout: 8000 });
         }
         function onTaskStoreChange() {
             var select = document.getElementById('task-store-select');
