@@ -199,6 +199,24 @@ const init = async () => {
       const { lastID } = await run('INSERT INTO stores (name, lat, lng) VALUES (?, ?, ?)', [t.place_name || 'موقع مهمة', t.lat, t.lng]);
       await run('UPDATE tasks SET store_id = ? WHERE id = ?', [lastID, t.id]);
     }
+    // The old lat/lng columns are still NOT NULL, which would break every
+    // task added from now on (the app never supplies them anymore) — sqlite
+    // has no ALTER to drop a NOT NULL constraint, so the table is rebuilt in
+    // its current shape instead, carrying every row over (store_id is set
+    // for all of them by the backfill above by this point).
+    await run('ALTER TABLE tasks RENAME TO tasks_old_shape');
+    await run(`CREATE TABLE tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_id INTEGER NOT NULL REFERENCES users(id),
+      store_id INTEGER REFERENCES stores(id),
+      title TEXT NOT NULL,
+      is_done INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      done_at DATETIME
+    )`);
+    await run(`INSERT INTO tasks (id, owner_id, store_id, title, is_done, created_at, done_at)
+               SELECT id, owner_id, store_id, title, is_done, created_at, done_at FROM tasks_old_shape`);
+    await run('DROP TABLE tasks_old_shape');
   }
 };
 
