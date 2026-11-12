@@ -1,8 +1,4 @@
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
-const multer = require('multer');
 const { Jimp } = require('jimp');
 const { run, get, all } = require('../db');
 const { requireListAccess } = require('../middleware/listAccess');
@@ -10,52 +6,10 @@ const { nextWeekdayAfter, todayDateOnlyString, WEEKDAY_NAMES_AR, nowOmanString, 
 const { STORE_CATEGORIES, itemCategoryOrder, itemCategoryMapFrom, CUSTOM_CATEGORY_ICONS, nextCategoryColor } = require('../utils/categories');
 const { UNITS } = require('../utils/units');
 const { askAI, getAIProvider } = require('../utils/ai');
+const { normalizeProductText } = require('../utils/text');
+const { uploadBrandImage, saveBrandImage, validExistingBrandImage } = require('../utils/brandImages');
 
 const router = express.Router();
-
-// Optional brand photo on a purchase: kept deliberately tiny (resized to a
-// 200px-max thumbnail, re-encoded as JPEG) since it's only ever shown as a
-// small thumbnail, not a full image — this keeps per-upload disk usage low.
-const BRAND_UPLOAD_DIR = path.join(__dirname, '..', 'public', 'uploads', 'brands');
-const BRAND_THUMB_MAX_DIM = 200;
-
-const brandImageUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 6 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype)),
-});
-
-// Swallows upload errors (bad type, too large, etc.) rather than failing the
-// whole "mark as bought" action — the photo is optional, so a bad upload
-// should just be skipped instead of blocking the purchase.
-const uploadBrandImage = (req, res, next) => {
-  brandImageUpload.single('brand_image')(req, res, () => next());
-};
-
-const saveBrandImage = async (file) => {
-  if (!file) return null;
-  try {
-    fs.mkdirSync(BRAND_UPLOAD_DIR, { recursive: true });
-    const image = await Jimp.read(file.buffer);
-    image.scaleToFit({ w: BRAND_THUMB_MAX_DIM, h: BRAND_THUMB_MAX_DIM });
-    const filename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`;
-    await image.write(path.join(BRAND_UPLOAD_DIR, filename), { quality: 70 });
-    return `/uploads/brands/${filename}`;
-  } catch (err) {
-    console.error('brand image processing failed:', err.message);
-    return null;
-  }
-};
-
-// A brand photo path the client carried over (e.g. from a past brand) —
-// only accepted if it's one of our own uploads that actually exists, never
-// trusted blindly. Returns the path or null.
-const validExistingBrandImage = (p) =>
-  typeof p === 'string' &&
-  /^\/uploads\/brands\/[A-Za-z0-9._-]+$/.test(p) &&
-  fs.existsSync(path.join(BRAND_UPLOAD_DIR, path.basename(p)))
-    ? p
-    : null;
 
 // Best-effort AI read of a brand photo's name/variant (via the configured AI
 // provider, see utils/ai.js), offered purely as a pre-fill: the brand/detail
@@ -1201,19 +1155,8 @@ router.post('/items/:itemId/delete', async (req, res) => {
 
 // Price comparison for the item history page: purchases of the exact same
 // product — same brand AND same details; only the price may differ — grouped
-// together, then compared across stores and over time. Text is normalized
-// (spacing, أ/إ/آ→ا, ة→ه, ى→ي, case) so trivial typing differences don't
-// split a product in two. Purchases without a price or without any brand
-// info can't be compared and are skipped.
-const normalizeProductText = (s) =>
-  String(s || '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .replace(/[أإآ]/g, 'ا')
-    .replace(/ة/g, 'ه')
-    .replace(/ى/g, 'ي')
-    .toLowerCase();
-
+// together, then compared across stores and over time. Purchases without a
+// price or without any brand info can't be compared and are skipped.
 const buildPriceComparison = (purchases) => {
   const groups = new Map();
   const chronological = purchases

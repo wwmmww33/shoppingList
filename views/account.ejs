@@ -98,9 +98,77 @@
             <button type="button" class="btn btn-outline btn-sm" onclick="suggestCategoriesGlobally()"><i data-lucide="sparkles" class="lucide"></i> تحليل واقتراح</button>
             <div id="global-category-suggest-body" style="margin-top:10px;"></div>
         </div>
+
+        <div class="card" id="brands">
+            <h3 style="margin-top:0;">البراندات</h3>
+            <p style="font-size:0.85rem; color: var(--text-muted); margin-top:-6px;">كل البراندات المسجّلة من قبل، مجمّعة حسب تصنيف الغرض — بدون أي تفاصيل أسعار. يمكنك تعديل الاسم/التفاصيل/الصورة، أو نقل براند إلى غرض آخر.</p>
+            <%
+            const unclassifiedBucket = { key: '', label: 'بدون تصنيف', icon: 'package', color: '#9e9e9e' };
+            const brandCategoryList = itemCategories.concat([unclassifiedBucket]);
+            let anyBrandsShown = false;
+            %>
+            <% brandCategoryList.forEach(function(c) { %>
+                <% const brands = brandsByCategory[c.key] || []; %>
+                <% if (brands.length === 0) { return; } %>
+                <% anyBrandsShown = true; %>
+                <button type="button" class="collapsible-toggle" onclick="toggleCollapsible('brands-cat-<%= c.key || 'none' %>')">
+                    <span><i data-lucide="<%= c.icon %>" class="lucide" style="color:<%= c.color %>;"></i> <%= c.label %> (<%= brands.length %>)</span>
+                    <span class="chev">▾</span>
+                </button>
+                <div class="collapsible-body" id="brands-cat-<%= c.key || 'none' %>" style="margin-bottom:10px;">
+                    <% brands.forEach(function(b, idx) { %>
+                        <% const rowId = 'brand-' + (c.key || 'none') + '-' + idx; %>
+                        <div class="list-row">
+                            <span style="display:flex; align-items:center; gap:8px;">
+                                <% if (b.image) { %><img src="<%= b.image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="openImageLightbox(this.src)"><% } %>
+                                <span>
+                                    <strong><%= b.brand || b.detail || 'بدون اسم' %></strong>
+                                    <% if (b.brand && b.detail) { %><span class="meta"><%= b.detail %></span><% } %>
+                                    <div class="history-sub">تحت: <%= b.itemName %></div>
+                                </span>
+                            </span>
+                            <span style="display:flex; gap:6px;">
+                                <button type="button" class="icon-btn" title="تعديل" onclick="toggleBrandRowPanel('<%= rowId %>-edit')"><i data-lucide="pencil" class="lucide"></i></button>
+                                <button type="button" class="icon-btn" title="نقل لغرض آخر" onclick="toggleBrandRowPanel('<%= rowId %>-move')"><i data-lucide="move" class="lucide"></i></button>
+                            </span>
+                        </div>
+                        <form method="POST" action="/brands/edit" enctype="multipart/form-data" class="edit-panel" id="<%= rowId %>-edit">
+                            <input type="hidden" name="item_name" value="<%= b.itemName %>">
+                            <input type="hidden" name="brand" value="<%= b.brand || '' %>">
+                            <input type="hidden" name="detail" value="<%= b.detail || '' %>">
+                            <input type="text" name="new_brand" value="<%= b.brand || '' %>" placeholder="اسم البراند" class="flex-1">
+                            <input type="text" name="new_detail" value="<%= b.detail || '' %>" placeholder="التفاصيل" class="flex-1">
+                            <label class="btn btn-outline btn-sm" style="cursor:pointer; flex:0 0 auto; display:inline-flex; align-items:center; gap:4px;">
+                                <i data-lucide="image" class="lucide"></i> تغيير الصورة
+                                <input type="file" name="brand_image" accept="image/*" style="display:none;">
+                            </label>
+                            <button type="submit" class="btn btn-success btn-sm">حفظ</button>
+                        </form>
+                        <form method="POST" action="/brands/move" class="move-panel" id="<%= rowId %>-move">
+                            <input type="hidden" name="item_name" value="<%= b.itemName %>">
+                            <input type="hidden" name="brand" value="<%= b.brand || '' %>">
+                            <input type="hidden" name="detail" value="<%= b.detail || '' %>">
+                            <select name="target_item_name" class="flex-1">
+                                <% allItemNames.filter(function(n) { return n !== b.itemName; }).forEach(function(n) { %>
+                                    <option value="<%= n %>"><%= n %></option>
+                                <% }) %>
+                            </select>
+                            <button type="submit" class="btn btn-success btn-sm">نقل</button>
+                        </form>
+                    <% }) %>
+                </div>
+            <% }) %>
+            <% if (!anyBrandsShown) { %>
+                <p style="color: var(--text-muted);">لا توجد براندات مسجّلة بعد.</p>
+            <% } %>
+        </div>
     </div>
 
     <script>
+        function toggleBrandRowPanel(id) {
+            var el = document.getElementById(id);
+            if (el) el.classList.toggle('open');
+        }
         function suggestCategoriesGlobally() {
             var body = document.getElementById('global-category-suggest-body');
             body.innerHTML = '<p style="color: var(--text-muted); font-size:0.9rem;">جاري التحليل بالذكاء الاصطناعي...</p>';
