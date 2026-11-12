@@ -333,6 +333,27 @@ input[type="text"], input[type="email"], input[type="password"], input[type="num
   padding: 4px 0;
 }
 .item-row.no-expand .item-line { cursor: default; }
+/* Hidden unless bulk-select mode ("تسجيل سعر إجمالي") is on, so day-to-day
+   browsing never shows a stray checkbox. */
+.bulk-select-checkbox { display: none; flex: 0 0 auto; width: 20px; height: 20px; }
+body.bulk-select-active .bulk-select-checkbox { display: inline-block; }
+#bulk-select-toggle.active, [id^="bulk-select-toggle-"].active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.bulk-select-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  padding: 10px 14px;
+  z-index: 140;
+  max-width: calc(100vw - 32px);
+}
 .item-name { font-weight: 700; font-size: 1.08rem; color: var(--primary-dark); }
 .item-row.bought .item-name, .item-row.cancelled .item-name { text-decoration: line-through; }
 .item-qty { color: var(--text-muted); font-size: 0.82rem; }

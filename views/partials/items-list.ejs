@@ -50,9 +50,19 @@ function catHeaderHtml(c, collapseId, showAddButton, startOpen) {
     if (collapseId) {
         // startOpen keeps the chev's rotation in sync with a group that
         // starts expanded (active items) rather than folded (archive) —
-        // toggleCollapsible only flips this class from here on.
-        return '<div class="category-header category-header-toggle' + (startOpen ? ' open' : '') + '" onclick="toggleCollapsible(\'' + collapseId + '\')">' +
-            icon + ' ' + label + addBtn + ' <span class="chev">▾</span></div>';
+        // toggleCollapsible only flips this class from here on. The fold
+        // toggle (icon/label/chev) stays centered as its own group, while
+        // the add button sits pinned to the far edge instead of right next
+        // to the chev — an invisible same-size spacer on the opposite edge
+        // keeps the centered group actually centered rather than drifting
+        // toward whichever side has the add button.
+        const spacer = showAddButton ? '<span class="icon-btn" style="visibility:hidden;" aria-hidden="true"><i data-lucide="plus-circle" class="lucide"></i></span>' : '';
+        const justify = showAddButton ? ' style="justify-content:space-between;"' : '';
+        return '<div class="category-header category-header-toggle' + (startOpen ? ' open' : '') + '"' + justify + ' onclick="toggleCollapsible(\'' + collapseId + '\')">' +
+            spacer +
+            '<span style="display:flex; align-items:center; gap:4px;">' + icon + ' ' + label + ' <span class="chev">▾</span></span>' +
+            addBtn +
+            '</div>';
     }
     return '<div class="category-header">' + icon + ' ' + label + addBtn + '</div>';
 }
@@ -409,9 +419,38 @@ function priceQtyLabel(price, qty) {
     </div>
 </div>
 
-<div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+<div class="section-title" style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
     <span>النشطة (<%= activeItems.length %>)</span>
-    <button type="button" class="btn btn-outline btn-sm" onclick="suggestCategoriesForList('<%= listId %>')"><i data-lucide="sparkles" class="lucide"></i> اقتراح تصنيفات</button>
+    <span style="display:flex; gap:8px;">
+        <button type="button" class="btn btn-outline btn-sm" id="bulk-select-toggle-<%= listId %>" onclick="toggleBulkSelectMode('<%= listId %>')"><i data-lucide="list-checks" class="lucide"></i> تسجيل سعر إجمالي</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="suggestCategoriesForList('<%= listId %>')"><i data-lucide="sparkles" class="lucide"></i> اقتراح تصنيفات</button>
+    </span>
+</div>
+<%# Floating bar: appears once bulk-select mode is on, showing the running
+    count and the one-tap action to record a single total price split
+    evenly across every selected item — for when there's no time to log
+    each item's own brand/price separately (e.g. "خضروات وفواكه" bought
+    together for one total). %>
+<div class="bulk-select-bar" id="bulk-select-bar-<%= listId %>" style="display:none;">
+    <span id="bulk-select-count-<%= listId %>">0 محدد</span>
+    <button type="button" class="btn btn-success btn-sm" onclick="openBulkBuyModal('<%= listId %>')">تسجيل السعر الإجمالي</button>
+    <button type="button" class="btn btn-outline btn-sm" onclick="toggleBulkSelectMode('<%= listId %>')">إلغاء</button>
+</div>
+<div class="modal-overlay" id="bulk-buy-modal-<%= listId %>" onclick="if (event.target === this) closeBulkBuyModal('<%= listId %>')">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3>تسجيل سعر إجمالي</h3>
+            <button type="button" class="icon-btn" title="إغلاق" onclick="closeBulkBuyModal('<%= listId %>')"><i data-lucide="x" class="lucide"></i></button>
+        </div>
+        <p class="history-sub" id="bulk-buy-summary-<%= listId %>" style="margin-top:-6px;"></p>
+        <form id="bulk-buy-form-<%= listId %>" class="inline-form" onsubmit="submitBulkBuy(event, '<%= listId %>')">
+            <label class="field">السعر الإجمالي
+                <input type="number" step="0.001" min="0" inputmode="decimal" name="total_price" id="bulk-buy-price-<%= listId %>" required>
+            </label>
+            <p class="history-sub" style="flex:1 1 100%; margin:0;">يُقسَّم بالتساوي على الأغراض المحددة ويُسجَّل كشراء بدون براند لكل منها.</p>
+            <button type="submit" class="btn btn-success btn-sm">تسجيل</button>
+        </form>
+    </div>
 </div>
 <% if (isOwner) { %>
 <div style="display:flex; justify-content:flex-end; gap:10px; margin:-4px 0 8px; font-size:0.82rem;">
@@ -450,7 +489,8 @@ activeItems.forEach(function(item) {
     }
 %>
     <div class="item-row <%= item.hidden_from_shared ? 'hidden-item' : '' %>" data-item-id="<%= item.id %>">
-        <div class="item-line" onclick="toggleItemControls(<%= item.id %>)">
+        <div class="item-line" onclick="toggleItemControls(<%= item.id %>, this)">
+            <input type="checkbox" class="bulk-select-checkbox" data-item-id="<%= item.id %>" onclick="event.stopPropagation(); onBulkCheckboxChange('<%= listId %>');">
             <% if (item.last_brand_image) { %><img src="<%= item.last_brand_image %>" class="brand-thumb brand-thumb-sm" alt="" onclick="event.stopPropagation(); openImageLightbox(this.src);"><% } %>
             <span class="item-name"><%= item.name %></span>
             <%- qtyLabel(item) %>
@@ -581,7 +621,12 @@ activeItems.forEach(function(item) {
                         from a past brand the placeholders are gone, and "0.3"
                         alone doesn't say whether it's a price or a quantity. %>
                     <label class="field">اسم البراند
-                        <input type="text" name="brand_custom" id="brand-custom-<%= item.id %>" class="pb-name" placeholder="مثال: المراعي">
+                        <span style="display:flex; gap:6px; align-items:center;">
+                            <input type="text" name="brand_custom" id="brand-custom-<%= item.id %>" class="pb-name" placeholder="مثال: المراعي" style="flex:1 1 auto; min-width:0;">
+                            <%# Quick-fill for when there's no time to look up the actual
+                                brand — still worth logging the price under something. %>
+                            <button type="button" class="btn btn-outline btn-sm" style="flex:0 0 auto; white-space:nowrap;" onclick="document.getElementById('brand-custom-<%= item.id %>').value = 'غير محدد';">غير محدد</button>
+                        </span>
                     </label>
                     <label class="field">التفاصيل
                         <input type="text" name="brand_detail" id="brand-detail-<%= item.id %>" class="pb-detail" placeholder="الحجم/النوع، مثال: كرتون">
@@ -604,6 +649,17 @@ activeItems.forEach(function(item) {
                     <span class="history-sub pb-status" style="flex:1 1 100%;"></span>
                     <label class="field"><%= taxRate ? 'سعر الوحدة قبل الضريبة' : 'سعر الوحدة' %>
                         <input type="number" step="0.001" min="0" inputmode="decimal" name="price" placeholder="اختياري">
+                    </label>
+                    <label class="field">مدة الضمان
+                        <select name="warranty_months">
+                            <option value="">بدون ضمان</option>
+                            <option value="3">٣ أشهر</option>
+                            <option value="6">٦ أشهر</option>
+                            <option value="12">سنة</option>
+                            <option value="18">سنة ونصف</option>
+                            <option value="24">سنتان</option>
+                            <option value="36">٣ سنوات</option>
+                        </select>
                     </label>
                     <div class="history-sub brand-store-missing" id="brand-store-missing-<%= item.id %>" style="display:none; flex:1 1 100%;">
                         لم يتم تحديد المحل —
@@ -755,9 +811,75 @@ if (catGroupOpen) { %></div><% } %>
     // Tapping the item row itself only reveals/hides the secondary action
     // icons (edit/move/cancel/hide/history/delete) — independent of the buy
     // panel, which opens only via its own dedicated "تم الشراء" button.
-    function toggleItemControls(id) {
+    function toggleItemControls(id, lineEl) {
+        // In bulk-select mode, tapping the row toggles its checkbox instead
+        // of opening the normal edit/move/etc. controls — selecting items
+        // for the one-tap total-price action is the whole point of the mode.
+        if (document.body.classList.contains('bulk-select-active')) {
+            var row = lineEl && lineEl.closest('.item-row');
+            var checkbox = row && row.querySelector('.bulk-select-checkbox');
+            if (checkbox) {
+                checkbox.checked = !checkbox.checked;
+                onBulkCheckboxChange(currentBulkListId);
+            }
+            return;
+        }
         var extra = document.getElementById('item-icons-extra-' + id);
         if (extra) extra.style.display = (extra.style.display === 'flex') ? 'none' : 'flex';
+    }
+    // Bulk-select ("تسجيل سعر إجمالي"): lets several items bought together
+    // with no itemized prices (e.g. a bag of mixed vegetables) be marked
+    // bought from ONE total price, split evenly, instead of forcing a
+    // brand/price to be typed for each one separately.
+    var currentBulkListId = null;
+    function toggleBulkSelectMode(listId) {
+        var active = document.body.classList.toggle('bulk-select-active');
+        currentBulkListId = active ? listId : null;
+        document.querySelectorAll('.bulk-select-checkbox').forEach(function(cb) { cb.checked = false; });
+        document.getElementById('bulk-select-bar-' + listId).style.display = active ? 'flex' : 'none';
+        var toggleBtn = document.getElementById('bulk-select-toggle-' + listId);
+        if (toggleBtn) toggleBtn.classList.toggle('active', active);
+        onBulkCheckboxChange(listId);
+    }
+    function onBulkCheckboxChange(listId) {
+        if (!listId) return;
+        var count = document.querySelectorAll('.bulk-select-checkbox:checked').length;
+        var label = document.getElementById('bulk-select-count-' + listId);
+        if (label) label.textContent = count + ' محدد';
+    }
+    function openBulkBuyModal(listId) {
+        var ids = Array.from(document.querySelectorAll('.bulk-select-checkbox:checked')).map(function(cb) { return cb.getAttribute('data-item-id'); });
+        if (ids.length === 0) return;
+        var names = ids.map(function(id) {
+            var row = document.querySelector('.item-row[data-item-id="' + id + '"] .item-name');
+            return row ? row.textContent : id;
+        });
+        document.getElementById('bulk-buy-summary-' + listId).textContent = ids.length + ' غرض: ' + names.join('، ');
+        document.getElementById('bulk-buy-form-' + listId).dataset.itemIds = ids.join(',');
+        document.getElementById('bulk-buy-price-' + listId).value = '';
+        document.getElementById('bulk-buy-modal-' + listId).classList.add('open');
+    }
+    function closeBulkBuyModal(listId) {
+        document.getElementById('bulk-buy-modal-' + listId).classList.remove('open');
+    }
+    function submitBulkBuy(e, listId) {
+        e.preventDefault();
+        var form = document.getElementById('bulk-buy-form-' + listId);
+        var ids = (form.dataset.itemIds || '').split(',').filter(Boolean);
+        var price = document.getElementById('bulk-buy-price-' + listId).value;
+        if (ids.length === 0 || !price) return;
+        fetch('/items/bulk-buy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ item_ids: ids.join(','), total_price: price, redirect_to: window.location.pathname + window.location.search }),
+        })
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                closeBulkBuyModal(listId);
+                toggleBulkSelectMode(listId);
+                applyFetchedHtml(html, null);
+            })
+            .catch(function() {});
     }
     // An item can be rendered twice (its active-list row and its green
     // "في القائمة" row in the archive drawer), each with its own edit/move
@@ -860,11 +982,24 @@ if (catGroupOpen) { %></div><% } %>
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var suggestions = (data && data.suggestions) || [];
+                var assignedCount = (data && data.assignedCount) || 0;
+                // Items matched to an EXISTING category were assigned server-side
+                // already (no confirmation needed, same as the single-item add's
+                // own auto-fill) — refresh so they show correctly right away.
+                if (assignedCount > 0) {
+                    fetch(window.location.href)
+                        .then(function(res) { return res.text(); })
+                        .then(function(html) { applyFetchedHtml(html, null); });
+                }
+                var assignedNote = assignedCount > 0
+                    ? '<p style="font-size:0.85rem; color: var(--primary); margin:0 0 10px;"><i data-lucide="sparkles" class="lucide"></i> تم تصنيف ' + assignedCount + ' غرض تلقائيًا ضمن تصنيفات موجودة.</p>'
+                    : '';
                 if (suggestions.length === 0) {
-                    body.innerHTML = '<p style="color: var(--text-muted); font-size:0.9rem;">لا توجد اقتراحات حاليًا (إما كل الأغراض مصنفة، أو تعذّر التحليل).</p>';
+                    body.innerHTML = assignedNote || '<p style="color: var(--text-muted); font-size:0.9rem;">لا توجد اقتراحات حاليًا (إما كل الأغراض مصنفة، أو تعذّر التحليل).</p>';
+                    if (window.renderIcons) renderIcons();
                     return;
                 }
-                body.innerHTML = '';
+                body.innerHTML = assignedNote;
                 suggestions.forEach(function(s) {
                     var card = document.createElement('div');
                     card.className = 'card';
@@ -1315,6 +1450,8 @@ if (catGroupOpen) { %></div><% } %>
         if (qtyInput) syncQtyChips(qtyInput);
         var priceInput = modal.querySelector('input[name="price"]');
         if (priceInput) priceInput.value = '';
+        var warrantyInput = modal.querySelector('select[name="warranty_months"]');
+        if (warrantyInput) warrantyInput.value = '';
         var storeInput = document.getElementById('brand-store-' + id);
         if (storeInput) storeInput.value = '';
         modal.querySelectorAll('input[name="brand_image"]').forEach(function(inp) { inp.value = ''; });

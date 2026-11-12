@@ -108,11 +108,16 @@
                 .then(function(res) { return res.json(); })
                 .then(function(data) {
                     var suggestions = (data && data.suggestions) || [];
+                    var assignedCount = (data && data.assignedCount) || 0;
+                    var assignedNote = assignedCount > 0
+                        ? '<p style="font-size:0.85rem; color: var(--primary); margin:0 0 10px;"><i data-lucide="sparkles" class="lucide"></i> تم تصنيف ' + assignedCount + ' غرض تلقائيًا ضمن تصنيفات موجودة.</p>'
+                        : '';
                     if (suggestions.length === 0) {
-                        body.innerHTML = '<p style="color: var(--text-muted); font-size:0.9rem;">لا توجد اقتراحات حاليًا (إما كل الأغراض مصنفة، أو تعذّر التحليل).</p>';
+                        body.innerHTML = assignedNote || '<p style="color: var(--text-muted); font-size:0.9rem;">لا توجد اقتراحات حاليًا (إما كل الأغراض مصنفة، أو تعذّر التحليل).</p>';
+                        if (window.renderIcons) renderIcons();
                         return;
                     }
-                    body.innerHTML = '';
+                    body.innerHTML = assignedNote;
                     suggestions.forEach(function(s) {
                         var card = document.createElement('div');
                         card.className = 'card';

@@ -120,6 +120,10 @@ const init = async () => {
   await safeAlter('ALTER TABLE lists ADD COLUMN tax_rate REAL');
   await safeAlter('ALTER TABLE list_items ADD COLUMN tax_exempt INTEGER NOT NULL DEFAULT 0');
   await safeAlter('ALTER TABLE item_purchases ADD COLUMN tax_rate REAL');
+  // Warranty length in months, for items that come with one (electronics,
+  // appliances...). The expiry date is computed on read from bought_at +
+  // warranty_months rather than stored, so it never falls out of sync.
+  await safeAlter('ALTER TABLE item_purchases ADD COLUMN warranty_months INTEGER');
 
   // One-time backfill: purchases recorded before the brand-matching fix often
   // had the actual brand name typed into "detail" only, leaving "brand"
@@ -132,6 +136,24 @@ const init = async () => {
   await run(
     "UPDATE item_purchases SET brand = brand_detail WHERE (brand IS NULL OR brand = '') AND brand_detail IS NOT NULL AND brand_detail != ''"
   );
+
+  // One-time backfill: re-adding an item (e.g. after buying it) created a
+  // fresh row with no category yet, which could end up being the "latest"
+  // one — making an item that's actually categorized elsewhere show up as
+  // uncategorized. Fills any such empty category from the latest OTHER row
+  // with the same name that does have one (across every list, not just the
+  // same one — a category is harmless to share across lists). Idempotent:
+  // once filled, a row no longer matches the WHERE clause.
+  await run(`
+    UPDATE list_items
+    SET category = (
+      SELECT li2.category FROM list_items li2
+      WHERE li2.name = list_items.name AND li2.category IS NOT NULL
+      ORDER BY li2.id DESC LIMIT 1
+    )
+    WHERE (category IS NULL OR category = '')
+      AND EXISTS (SELECT 1 FROM list_items li3 WHERE li3.name = list_items.name AND li3.category IS NOT NULL)
+  `);
 
   // Item categories used to be a fixed in-code list; they now live here so
   // people can add their own (manually or via an AI suggestion) alongside

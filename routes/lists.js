@@ -6,7 +6,7 @@ const multer = require('multer');
 const { Jimp } = require('jimp');
 const { run, get, all } = require('../db');
 const { requireListAccess } = require('../middleware/listAccess');
-const { nextWeekdayAfter, todayDateOnlyString, WEEKDAY_NAMES_AR, nowOmanString, formatDateArabic } = require('../utils/dates');
+const { nextWeekdayAfter, todayDateOnlyString, WEEKDAY_NAMES_AR, nowOmanString, formatDateArabic, addMonthsToDateString } = require('../utils/dates');
 const { STORE_CATEGORIES, itemCategoryOrder, itemCategoryMapFrom, CUSTOM_CATEGORY_ICONS, nextCategoryColor } = require('../utils/categories');
 const { UNITS } = require('../utils/units');
 const { askAI, getAIProvider } = require('../utils/ai');
@@ -121,6 +121,42 @@ const classifyItemCategoryWithAI = async (name, categories) => {
   const text = result.text.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
   const category = itemCategoryMapFrom(categories)[text] ? text : null;
   return { category, reason: category ? null : 'no_match' };
+};
+
+// Batched version of classifyItemCategoryWithAI: tries to slot a whole list
+// of uncategorized items into the EXISTING categories in one call, so
+// "اقتراح تصنيفات" first catches items that already have a fitting category
+// (no new one needed) before proposing brand-new categories for whatever's
+// genuinely left over. Silently skips anything it can't confidently match,
+// same as the single-item classifier.
+const classifyItemsIntoExistingCategories = async (itemNames, categories) => {
+  if (!getAIProvider() || itemNames.length === 0 || categories.length === 0) return [];
+  try {
+    const categoryList = categories.map((c) => `${c.key}: ${c.label}`).join('\n');
+    const result = await askAI({
+      prompt:
+        'لدي الأغراض التالية بدون تصنيف في قائمة مشتريات منزلية:\n' +
+        itemNames.join('، ') +
+        '\n\nصنّف كل غرض ضمن إحدى هذه الفئات الموجودة فقط إن كانت مناسبة له فعلاً بوضوح، وتجاهل (لا تذكر) أي غرض لا تنطبق عليه فئة واضحة:\n' +
+        categoryList +
+        '\n\nأجب فقط بصيغة JSON صالحة بدون أي نص إضافي: [{"item": "اسم الغرض كما ورد بالضبط", "category": "رمز الفئة"}]',
+      maxTokens: 500,
+      timeoutMs: 15000,
+    });
+    if (!result.ok) return [];
+    let text = result.text.trim();
+    text = text.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```$/, '').trim();
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) return [];
+    const catMap = itemCategoryMapFrom(categories);
+    const validNames = new Set(itemNames);
+    return parsed
+      .filter((r) => r && typeof r.item === 'string' && validNames.has(r.item) && typeof r.category === 'string' && catMap[r.category])
+      .map((r) => ({ name: r.item, category: r.category }));
+  } catch (err) {
+    console.error('AI existing-category classification failed:', err.message);
+    return [];
+  }
 };
 
 // "إضافة غرض" from a photo: one AI call that names the item generically (the
@@ -362,6 +398,14 @@ const parseTaxRate = (raw) => {
   return text !== '' && Number.isFinite(rate) && rate >= 0 && rate <= 100 ? Math.round(rate * 100) / 100 : null;
 };
 
+// A warranty length in months: blank or not a positive whole number means
+// "no warranty". The expiry date itself is computed on read, not stored.
+const parseWarrantyMonths = (raw) => {
+  const text = String(raw || '').trim();
+  const months = Number(text);
+  return text !== '' && Number.isInteger(months) && months > 0 ? months : null;
+};
+
 // A purchase's amounts: price is one unit before tax, quantity defaults to 1.
 const purchaseAmounts = (price, qty, taxRate) => {
   if (price === null) return { subtotal: null, tax: null, finalTotal: null };
@@ -420,23 +464,26 @@ const loadShoppingHistoryByDate = async (listId) => {
 // (own + shared, any status — active or already bought), used to power the
 // "اسم الغرض" autocomplete when adding a new item.
 // One entry per distinct item name the person has ever added (own + shared
-// lists), carrying the CATEGORY from the most recent instance of that name —
-// so picking a known name from the autocomplete can fill in its category too,
-// without an AI call (this is exact history, not a guess).
+// lists), carrying the CATEGORY from the most recent instance of that name
+// that actually HAD one — not just literally the latest row — so picking a
+// known name from the autocomplete can fill in its category from real
+// history. Re-adding an item (e.g. after buying it) often creates a fresh,
+// not-yet-categorized row; without this, that row being the "latest" would
+// make an already-categorized item look uncategorized again forever.
 const loadKnownItemNames = async (userId) => {
   const rows = await all(
-    `SELECT li.name, li.category
+    `WITH accessible_lists AS (
+       SELECT id FROM lists WHERE owner_id = ?
+       UNION
+       SELECT list_id FROM list_shares WHERE user_id = ?
+     )
+     SELECT DISTINCT li.name,
+       (SELECT li2.category FROM list_items li2
+        WHERE li2.name = li.name AND li2.category IS NOT NULL
+          AND li2.list_id IN (SELECT id FROM accessible_lists)
+        ORDER BY li2.id DESC LIMIT 1) AS category
      FROM list_items li
-     INNER JOIN (
-       SELECT name, MAX(id) AS max_id
-       FROM list_items
-       WHERE list_id IN (
-         SELECT id FROM lists WHERE owner_id = ?
-         UNION
-         SELECT list_id FROM list_shares WHERE user_id = ?
-       )
-       GROUP BY name
-     ) latest ON latest.name = li.name AND latest.max_id = li.id
+     WHERE li.list_id IN (SELECT id FROM accessible_lists)
      ORDER BY li.name ASC`,
     [userId, userId]
   );
@@ -615,7 +662,6 @@ router.post('/lists/:id/items', requireListAccess, uploadBrandImage, async (req,
   if (!name) return res.redirect(`/lists/${req.list.id}`);
   const quantity = (req.body.quantity || '').trim() || null;
   const unit = (req.body.unit || '').trim() || null;
-  const category = (req.body.category || '').trim() || null;
   const isWeekly = req.body.is_weekly === 'on' ? 1 : 0;
   const weekday = isWeekly && req.body.weekly_weekday !== '' ? Number(req.body.weekly_weekday) : null;
   const plannedStoreId = req.body.planned_store_id ? Number(req.body.planned_store_id) : null;
@@ -624,11 +670,29 @@ router.post('/lists/:id/items', requireListAccess, uploadBrandImage, async (req,
   // The photo only matters when a brand was actually specified.
   const plannedImage = planned.brand || planned.detail ? await saveBrandImage(req.file) : null;
   // Adding an item again keeps its exemption, so it isn't silently taxed.
-  const previous = await get('SELECT tax_exempt FROM list_items WHERE list_id = ? AND name = ? ORDER BY id DESC LIMIT 1', [req.list.id, name]);
+  // The category fallback matches loadKnownItemNames: the most recent
+  // instance of this name (across every list the person can see) that
+  // actually HAD a category — a client-side miss (no autocomplete pick, AI
+  // classify didn't run or failed) still lands on the right category
+  // instead of silently going uncategorized.
+  const previous = await get(
+    `SELECT
+       (SELECT tax_exempt FROM list_items WHERE list_id = ? AND name = ? ORDER BY id DESC LIMIT 1) AS tax_exempt,
+       (SELECT li2.category FROM list_items li2
+        WHERE li2.name = ? AND li2.category IS NOT NULL
+          AND li2.list_id IN (
+            SELECT id FROM lists WHERE owner_id = ?
+            UNION
+            SELECT list_id FROM list_shares WHERE user_id = ?
+          )
+        ORDER BY li2.id DESC LIMIT 1) AS category`,
+    [req.list.id, name, name, req.user.id, req.user.id]
+  );
+  const category = (req.body.category || '').trim() || (previous && previous.category) || null;
 
   await run(
     'INSERT INTO list_items (list_id, name, quantity, unit, category, is_weekly, weekly_weekday, planned_store_id, details, planned_brand, planned_brand_detail, planned_brand_image, tax_exempt, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [req.list.id, name, quantity, unit, category, isWeekly, weekday, plannedStoreId, details, planned.brand, planned.detail, plannedImage, previous ? previous.tax_exempt : 0, req.user.id]
+    [req.list.id, name, quantity, unit, category, isWeekly, weekday, plannedStoreId, details, planned.brand, planned.detail, plannedImage, (previous && previous.tax_exempt) || 0, req.user.id]
   );
   res.redirect(req.body.redirect_to || `/lists/${req.list.id}`);
 });
@@ -760,22 +824,34 @@ router.post('/categories/suggest', async (req, res) => {
        )`,
     [req.user.id, req.user.id]
   );
-  if (uncategorized.length === 0) return res.json({ suggestions: [] });
+  if (uncategorized.length === 0) return res.json({ suggestions: [], assignedCount: 0 });
   const categories = await loadItemCategories();
-  // AI matching works on names (it doesn't need to see ids), but duplicate
-  // names across different lists must still resolve back to every matching
-  // item id so applying a suggestion catches all of them, not just one.
-  const uniqueNames = [...new Set(uncategorized.map((i) => i.name))];
-  const suggestions = await suggestCategoriesWithAI(uniqueNames, categories);
   const idsByName = {};
   uncategorized.forEach((i) => {
     (idsByName[i.name] = idsByName[i.name] || []).push(i.id);
   });
+  // First pass: items that already fit an EXISTING category are assigned to
+  // it directly, no new category needed — same auto-fill the single-item
+  // add already does, just batched here for everything still uncategorized.
+  const uniqueNames = [...new Set(uncategorized.map((i) => i.name))];
+  const directMatches = await classifyItemsIntoExistingCategories(uniqueNames, categories);
+  let assignedCount = 0;
+  for (const m of directMatches) {
+    const ids = idsByName[m.name] || [];
+    if (ids.length === 0) continue;
+    await run(`UPDATE list_items SET category = ? WHERE id IN (${ids.map(() => '?').join(', ')})`, [m.category, ...ids]);
+    assignedCount += ids.length;
+  }
+  // Second pass: only what's still left (not matched above) goes into the
+  // new-category suggestions, same as before.
+  const matchedNames = new Set(directMatches.map((m) => m.name));
+  const remainingNames = uniqueNames.filter((n) => !matchedNames.has(n));
+  const suggestions = remainingNames.length > 0 ? await suggestCategoriesWithAI(remainingNames, categories) : [];
   const withIds = suggestions.map((s) => ({
     ...s,
     itemIds: s.items.flatMap((name) => idsByName[name] || []),
   }));
-  res.json({ suggestions: withIds });
+  res.json({ suggestions: withIds, assignedCount });
 });
 
 // Creates the suggested category and assigns it to specific item ids —
@@ -820,18 +896,36 @@ router.post('/categories/apply-suggestion', async (req, res) => {
   res.json({ ok: true, key, label, icon });
 });
 
-// Looks at this list's currently-uncategorized active items and asks the AI
-// for up to 3 new category suggestions. Read-only — nothing is created until
-// the person picks one via /categories/apply-suggestion.
+// Looks at this list's currently-uncategorized active items. Anything that
+// already fits an EXISTING category is assigned to it right away (same
+// auto-fill a single item add already does, just batched); only whatever's
+// genuinely left over goes into new-category suggestions, which still need
+// the person to pick one via /categories/apply-suggestion before anything
+// new is created.
 router.post('/lists/:id/categories/suggest', requireListAccess, async (req, res) => {
   const uncategorized = await all(
-    "SELECT name FROM list_items WHERE list_id = ? AND status = 'active' AND (category IS NULL OR category = '')",
+    "SELECT id, name FROM list_items WHERE list_id = ? AND status = 'active' AND (category IS NULL OR category = '')",
     [req.list.id]
   );
-  if (uncategorized.length === 0) return res.json({ suggestions: [] });
+  if (uncategorized.length === 0) return res.json({ suggestions: [], assignedCount: 0 });
   const categories = await loadItemCategories();
-  const suggestions = await suggestCategoriesWithAI(uncategorized.map((i) => i.name), categories);
-  res.json({ suggestions });
+  const idsByName = {};
+  uncategorized.forEach((i) => {
+    (idsByName[i.name] = idsByName[i.name] || []).push(i.id);
+  });
+  const uniqueNames = [...new Set(uncategorized.map((i) => i.name))];
+  const directMatches = await classifyItemsIntoExistingCategories(uniqueNames, categories);
+  let assignedCount = 0;
+  for (const m of directMatches) {
+    const ids = idsByName[m.name] || [];
+    if (ids.length === 0) continue;
+    await run(`UPDATE list_items SET category = ? WHERE id IN (${ids.map(() => '?').join(', ')})`, [m.category, ...ids]);
+    assignedCount += ids.length;
+  }
+  const matchedNames = new Set(directMatches.map((m) => m.name));
+  const remainingNames = uniqueNames.filter((n) => !matchedNames.has(n));
+  const suggestions = remainingNames.length > 0 ? await suggestCategoriesWithAI(remainingNames, categories) : [];
+  res.json({ suggestions, assignedCount });
 });
 
 // Creates the suggested category and assigns it to the named items in one
@@ -883,10 +977,11 @@ router.post('/items/:itemId/buy', uploadBrandImage, async (req, res) => {
   const purchasedQty = qtyRaw !== '' && Number.isFinite(Number(qtyRaw)) && Number(qtyRaw) > 0 ? Number(qtyRaw) : null;
 
   const taxRate = list.tax_rate ? (item.tax_exempt ? 0 : list.tax_rate) : null;
+  const warrantyMonths = parseWarrantyMonths(req.body.warranty_months);
 
   await run(
-    'INSERT INTO item_purchases (item_id, store_id, brand, brand_detail, brand_image, price, purchased_qty, tax_rate, bought_by, bought_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [item.id, storeId, brand, brandDetail, brandImage, price, purchasedQty, taxRate, req.user.id, nowOmanString()]
+    'INSERT INTO item_purchases (item_id, store_id, brand, brand_detail, brand_image, price, purchased_qty, tax_rate, warranty_months, bought_by, bought_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [item.id, storeId, brand, brandDetail, brandImage, price, purchasedQty, taxRate, warrantyMonths, req.user.id, nowOmanString()]
   );
 
   if (item.is_weekly && item.weekly_weekday !== null) {
@@ -897,6 +992,53 @@ router.post('/items/:itemId/buy', uploadBrandImage, async (req, res) => {
   }
 
   redirectBackTo(req, res, item.list_id);
+});
+
+// Records ONE total price, split evenly, as a plain brand-less purchase for
+// each selected item — for when several things were bought together with no
+// itemized prices (e.g. a bag of mixed vegetables and fruit) and there's no
+// time/reason to type a brand and price for each one separately.
+router.post('/items/bulk-buy', async (req, res) => {
+  const itemIds = String(req.body.item_ids || '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n));
+  const totalRaw = (req.body.total_price || '').trim();
+  const total = totalRaw !== '' && Number.isFinite(Number(totalRaw)) ? Number(totalRaw) : null;
+  if (itemIds.length === 0 || total === null) return res.redirect(req.body.redirect_to || '/');
+
+  const placeholders = itemIds.map(() => '?').join(', ');
+  const items = await all(
+    `SELECT li.* FROM list_items li
+     WHERE li.id IN (${placeholders}) AND li.status = 'active'
+       AND li.list_id IN (
+         SELECT id FROM lists WHERE owner_id = ?
+         UNION
+         SELECT list_id FROM list_shares WHERE user_id = ?
+       )`,
+    [...itemIds, req.user.id, req.user.id]
+  );
+  if (items.length === 0) return res.redirect(req.body.redirect_to || '/');
+
+  // Split evenly, rounded to 3 decimals; the last item absorbs whatever
+  // rounding remainder is left over so the recorded total matches exactly.
+  const share = Math.round((total / items.length) * 1000) / 1000;
+  const boughtAt = nowOmanString();
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const isLast = i === items.length - 1;
+    const price = isLast ? Math.round((total - share * (items.length - 1)) * 1000) / 1000 : share;
+    await run(
+      'INSERT INTO item_purchases (item_id, price, bought_by, bought_at) VALUES (?, ?, ?, ?)',
+      [item.id, price, req.user.id, boughtAt]
+    );
+    if (item.is_weekly && item.weekly_weekday !== null) {
+      await run("UPDATE list_items SET status = 'bought', next_due_date = ? WHERE id = ?", [nextWeekdayAfter(item.weekly_weekday), item.id]);
+    } else {
+      await run("UPDATE list_items SET status = 'bought' WHERE id = ?", [item.id]);
+    }
+  }
+  res.redirect(req.body.redirect_to || `/lists/${items[0].list_id}`);
 });
 
 // Undo a purchase just made (offered as a short-lived "تراجع" toast on the
@@ -1143,7 +1285,10 @@ router.get('/items/:itemId/history', async (req, res) => {
      ORDER BY p.bought_at ${order === 'asc' ? 'ASC' : 'DESC'}, p.id ${order === 'asc' ? 'ASC' : 'DESC'}`,
     [ctx.item.name, req.user.id, req.user.id]
   );
-  purchases.forEach((p) => Object.assign(p, purchaseAmounts(p.price, p.purchased_qty, p.tax_rate)));
+  purchases.forEach((p) => {
+    Object.assign(p, purchaseAmounts(p.price, p.purchased_qty, p.tax_rate));
+    p.warrantyExpiry = p.warranty_months ? addMonthsToDateString(p.bought_at, p.warranty_months) : null;
+  });
   const stores = await all('SELECT * FROM stores ORDER BY name ASC');
   const comparison = buildPriceComparison(purchases);
   res.render('item-history', { item: ctx.item, list: ctx.list, purchases, stores, order, comparison });
@@ -1187,6 +1332,7 @@ router.post('/purchases/:purchaseId/edit', uploadBrandImage, async (req, res) =>
   const qtyRaw = (req.body.purchased_qty || '').trim();
   const purchasedQty = qtyRaw !== '' && Number.isFinite(Number(qtyRaw)) && Number(qtyRaw) > 0 ? Number(qtyRaw) : null;
   const taxRate = parseTaxRate(req.body.tax_rate);
+  const warrantyMonths = parseWarrantyMonths(req.body.warranty_months);
 
   // Date/time are optional overrides: anything missing or malformed keeps
   // the corresponding part of the original timestamp.
@@ -1203,8 +1349,8 @@ router.post('/purchases/:purchaseId/edit', uploadBrandImage, async (req, res) =>
   if (!brandImage) brandImage = req.body.remove_brand_image ? null : purchase.brand_image;
 
   await run(
-    'UPDATE item_purchases SET store_id = ?, brand = ?, brand_detail = ?, brand_image = ?, price = ?, purchased_qty = ?, tax_rate = ?, bought_at = ? WHERE id = ?',
-    [storeId, brand, brandDetail, brandImage, price, purchasedQty, taxRate, boughtAt, purchase.id]
+    'UPDATE item_purchases SET store_id = ?, brand = ?, brand_detail = ?, brand_image = ?, price = ?, purchased_qty = ?, tax_rate = ?, warranty_months = ?, bought_at = ? WHERE id = ?',
+    [storeId, brand, brandDetail, brandImage, price, purchasedQty, taxRate, warrantyMonths, boughtAt, purchase.id]
   );
   purchaseRedirect(req, res, item);
 });

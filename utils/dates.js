@@ -32,6 +32,16 @@ const formatDateArabic = (dateStr) => {
   return `${WEEKDAY_NAMES_AR[date.getUTCDay()]} ${d} ${ARABIC_MONTHS[m - 1]}`;
 };
 
+// `dateStr` can be a plain date or a full "YYYY-MM-DD HH:MM:SS" timestamp —
+// only the date part matters. Parsed/returned via UTC components for the
+// same reason as formatDateArabic: never let the server's own system
+// timezone shift the result by a day.
+const addMonthsToDateString = (dateStr, months) => {
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1 + months, d));
+  return date.toISOString().slice(0, 10);
+};
+
 // Oman (Asia/Muscat) is a fixed UTC+4 offset year-round — no DST to account for.
 // Purchases are timestamped with this regardless of the server's own system
 // timezone, so "bought_at" always reads correctly for someone in Oman.
@@ -39,4 +49,4 @@ const OMAN_UTC_OFFSET_HOURS = 4;
 const nowOmanString = () =>
   new Date(Date.now() + OMAN_UTC_OFFSET_HOURS * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
 
-module.exports = { WEEKDAY_NAMES_AR, todayDateOnlyString, nextWeekdayAfter, weekdayNameAr, nowOmanString, formatDateArabic };
+module.exports = { WEEKDAY_NAMES_AR, todayDateOnlyString, nextWeekdayAfter, weekdayNameAr, nowOmanString, formatDateArabic, addMonthsToDateString };

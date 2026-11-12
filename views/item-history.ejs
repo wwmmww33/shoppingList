@@ -99,6 +99,8 @@
                 }
                 %>
                 <% const hasTax = purchases.some(p => p.tax_rate !== null); %>
+                <% const hasWarranty = purchases.some(p => p.warranty_months); %>
+                <% const todayStr = new Date().toISOString().slice(0, 10); %>
                 <table class="history-table">
                     <thead>
                         <tr>
@@ -110,6 +112,7 @@
                             <th>الكمية</th>
                             <th><%= hasTax ? 'الإجمالي قبل الضريبة' : 'الإجمالي' %></th>
                             <% if (hasTax) { %><th>الضريبة</th><th>النهائي</th><% } %>
+                            <% if (hasWarranty) { %><th>الضمان</th><% } %>
                             <th>بواسطة</th>
                             <th></th>
                         </tr>
@@ -136,10 +139,19 @@
                                     <td data-label="الضريبة"><%= p.price === null || p.tax_rate === null ? '-' : (p.tax_rate === 0 ? 'معفى' : p.tax.toFixed(3) + ' (' + p.tax_rate + '%)') %></td>
                                     <td data-label="النهائي"><%= p.price !== null ? p.finalTotal.toFixed(3) : '-' %></td>
                                 <% } %>
+                                <% if (hasWarranty) { %>
+                                    <td data-label="الضمان">
+                                        <% if (p.warrantyExpiry) { %>
+                                            <span style="<%= p.warrantyExpiry >= todayStr ? 'color:var(--success); font-weight:600;' : 'color:var(--text-muted);' %>">
+                                                <%= p.warrantyExpiry >= todayStr ? 'ساري حتى' : 'انتهى في' %> <%= p.warrantyExpiry.split('-').reverse().join('-') %>
+                                            </span>
+                                        <% } else { %>-<% } %>
+                                    </td>
+                                <% } %>
                                 <td data-label="بواسطة"><%= p.buyer_name || 'مستخدم سابق' %></td>
                                 <td class="history-actions">
                                     <button type="button" class="icon-btn" title="تعديل"
-                                        onclick="openEditPurchaseModal(<%= JSON.stringify({ id: p.id, storeId: p.store_id || '', brand: p.brand || '', detail: p.brand_detail || '', price: p.price !== null ? p.price : '', qty: p.purchased_qty !== null ? p.purchased_qty : '', taxRate: p.tax_rate !== null ? p.tax_rate : '', date: String(p.bought_at || '').slice(0, 10), time: String(p.bought_at || '').slice(11, 16), image: p.brand_image || '' }) %>)">
+                                        onclick="openEditPurchaseModal(<%= JSON.stringify({ id: p.id, storeId: p.store_id || '', brand: p.brand || '', detail: p.brand_detail || '', price: p.price !== null ? p.price : '', qty: p.purchased_qty !== null ? p.purchased_qty : '', taxRate: p.tax_rate !== null ? p.tax_rate : '', warrantyMonths: p.warranty_months || '', date: String(p.bought_at || '').slice(0, 10), time: String(p.bought_at || '').slice(11, 16), image: p.brand_image || '' }) %>)">
                                         <i data-lucide="pencil" class="lucide"></i>
                                     </button>
                                 </td>

@@ -32,6 +32,17 @@
             <label class="field">نسبة الضريبة % (0 = معفى)
                 <input type="number" step="0.01" min="0" max="100" inputmode="decimal" name="tax_rate" id="edit-purchase-tax" placeholder="بدون ضريبة">
             </label>
+            <label class="field">مدة الضمان
+                <select name="warranty_months" id="edit-purchase-warranty">
+                    <option value="">بدون ضمان</option>
+                    <option value="3">٣ أشهر</option>
+                    <option value="6">٦ أشهر</option>
+                    <option value="12">سنة</option>
+                    <option value="18">سنة ونصف</option>
+                    <option value="24">سنتان</option>
+                    <option value="36">٣ سنوات</option>
+                </select>
+            </label>
             <div class="qty-picker">
                 <span class="qty-picker-label">الكمية</span>
                 <% [1, 2, 3, 4].forEach(function(n) { %><button type="button" class="qty-chip<%= n === 1 ? ' active' : '' %>" data-qty="<%= n %>" onclick="pickQty(this)"><%= n %></button><% }) %>
@@ -84,6 +95,7 @@
         document.getElementById('edit-purchase-price').value = p.price;
         document.getElementById('edit-purchase-qty').value = p.qty;
         document.getElementById('edit-purchase-tax').value = p.taxRate;
+        document.getElementById('edit-purchase-warranty').value = p.warrantyMonths || '';
         syncQtyChips(document.getElementById('edit-purchase-qty'));
         document.getElementById('edit-purchase-date').value = p.date || '';
         document.getElementById('edit-purchase-time').value = p.time || '';
