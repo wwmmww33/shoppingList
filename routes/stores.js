@@ -9,6 +9,39 @@ router.get('/stores', async (req, res) => {
   res.render('stores', { stores, storeCategories: STORE_CATEGORIES });
 });
 
+// What this person has bought from this store before — stores are a shared
+// directory (anyone can see the list), but purchase history stays scoped to
+// their own accessible lists (owner or shared), same privacy rule as
+// everywhere else. One row per distinct item name, its latest brand/detail
+// bought here, and how many times.
+router.get('/stores/:id', async (req, res) => {
+  const storeId = Number(req.params.id);
+  const store = await get('SELECT * FROM stores WHERE id = ?', [storeId]);
+  if (!store) return res.status(404).send('غير موجود');
+
+  const purchases = await all(
+    `SELECT li.id AS item_id, li.name AS item_name, li.category, ip.brand, ip.brand_detail, ip.price, ip.purchased_qty, ip.bought_at, cnt.purchase_count
+     FROM item_purchases ip
+     JOIN list_items li ON li.id = ip.item_id
+     JOIN (
+       SELECT li2.name AS name, COUNT(*) AS purchase_count, MAX(ip2.id) AS max_id
+       FROM item_purchases ip2
+       JOIN list_items li2 ON li2.id = ip2.item_id
+       WHERE ip2.store_id = ?
+         AND li2.list_id IN (
+           SELECT id FROM lists WHERE owner_id = ?
+           UNION
+           SELECT list_id FROM list_shares WHERE user_id = ?
+         )
+       GROUP BY li2.name
+     ) cnt ON cnt.name = li.name AND cnt.max_id = ip.id
+     ORDER BY ip.bought_at DESC`,
+    [storeId, req.user.id, req.user.id]
+  );
+  const itemCategories = await all('SELECT * FROM item_categories ORDER BY sort_order ASC, id ASC');
+  res.render('store-detail', { store, purchases, itemCategories });
+});
+
 router.post('/stores', async (req, res) => {
   const redirectTo = req.body.redirect_to || '/stores';
   const name = (req.body.name || '').trim();

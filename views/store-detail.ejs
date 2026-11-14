@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= store.name %> - قوائمنا</title>
+    <link rel="stylesheet" href="/style.css?v=<%= styleVersion %>">
+    <%- include('partials/theme-init') %>
+</head>
+<body>
+    <%- include('partials/nav') %>
+    <div class="container">
+        <div class="card">
+            <a href="/stores">&larr; رجوع للمحلات</a>
+            <h2 style="margin:10px 0 0;"><i data-lucide="store" class="lucide"></i> <%= store.name %></h2>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0;">الأغراض التي اشتريتها من هنا</h3>
+            <% if (purchases.length === 0) { %>
+                <p style="color: var(--text-muted);">لم تُسجَّل أي عملية شراء من هذا المحل بعد.</p>
+            <% } else { %>
+                <%
+                const catMap = {};
+                itemCategories.forEach(function(c) { catMap[c.key] = c; });
+                %>
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>الغرض</th>
+                            <th>آخر براند</th>
+                            <th>آخر شراء</th>
+                            <th>عدد مرات الشراء</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% purchases.forEach(function(p) { %>
+                            <% const c = catMap[p.category]; %>
+                            <tr>
+                                <td data-label="الغرض">
+                                    <% if (c) { %><i data-lucide="<%= c.icon %>" class="lucide" style="color:<%= c.color %>;"></i><% } %>
+                                    <%= p.item_name %>
+                                </td>
+                                <td data-label="آخر براند">
+                                    <%= p.brand || p.brand_detail || '-' %>
+                                    <% if (p.brand && p.brand_detail) { %><div class="history-sub"><%= p.brand_detail %></div><% } %>
+                                </td>
+                                <td data-label="آخر شراء"><%= String(p.bought_at).slice(0, 10).split('-').reverse().join('-') %></td>
+                                <td data-label="عدد مرات الشراء"><%= p.purchase_count %></td>
+                                <td class="history-actions">
+                                    <a href="/items/<%= p.item_id %>/history" class="icon-btn" title="سجل الشراء الكامل لهذا الغرض"><i data-lucide="bar-chart-2" class="lucide"></i></a>
+                                </td>
+                            </tr>
+                        <% }) %>
+                    </tbody>
+                </table>
+            <% } %>
+        </div>
+    </div>
+</body>
+</html>

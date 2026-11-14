@@ -51,11 +51,12 @@
             %>
             <% stores.forEach(function(s) { %>
                 <div class="list-row">
-                    <span onclick="toggleStoreActions(<%= s.id %>)" style="cursor:pointer;">
+                    <a href="/stores/<%= s.id %>" style="color:inherit; text-decoration:none; flex:1 1 auto;">
                         <%= s.name %>
                         <% if (s.category && storeCatMap[s.category]) { %><span class="badge"><i data-lucide="<%= storeCatMap[s.category].icon %>" class="lucide"></i> <%= storeCatMap[s.category].label %></span><% } %>
                         <% if (s.lat && s.lng) { %><span class="meta"><i data-lucide="map-pin" class="lucide"></i></span><% } %>
-                    </span>
+                    </a>
+                    <button type="button" class="icon-btn" title="خيارات" onclick="toggleStoreActions(<%= s.id %>)"><i data-lucide="more-vertical" class="lucide"></i></button>
                     <div class="store-actions" id="store-actions-<%= s.id %>" style="display:none; gap:6px;">
                         <button type="button" class="btn btn-outline btn-sm" onclick="toggleStoreEdit(<%= s.id %>)"><i data-lucide="pencil" class="lucide"></i> تعديل</button>
                         <form method="POST" action="/stores/<%= s.id %>/delete" style="display:inline;" onsubmit="return confirm('حذف هذا المحل؟');">
